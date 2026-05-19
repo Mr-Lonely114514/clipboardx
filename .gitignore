@@ -1,6 +1,9 @@
 # Rust build output
 code/target/
 
+# Database (contains clipboard history data!)
+code/clipboardx.db
+
 # IDE
 .vscode/
 .idea/
@@ -11,3 +14,9 @@ Thumbs.db
 
 # Tool
 .atomcode/
+
+# Design docs
+再审议/
+审议/
+需求/
+提示词记录.md
