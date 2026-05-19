@@ -471,8 +471,11 @@ unsafe extern "system" fn list_box_proc(
             TrackMouseEvent(&mut tme);
         }
         WM_MOUSEHOVER => {
-            // lParam 中的坐标是客户端坐标，直接传给 LB_ITEMFROMPOINT
-            let idx = SendMessageW(hwnd, LB_ITEMFROMPOINT, wparam(0), l) & 0xFFFF;
+            // lParam 中的坐标是客户端坐标（LOWORD=x, HIWORD=y），构造 POINT 结构
+            let x = (l as u32 & 0xFFFF) as i32;
+            let y = ((l as u32 >> 16) & 0xFFFF) as i32;
+            let mut pt = POINT { x, y };
+            let idx = SendMessageW(hwnd, LB_ITEMFROMPOINT, wparam(0), lparam((&mut pt) as *mut POINT as isize)) & 0xFFFF;
             if (idx as u32) < 0xFFFF && idx >= 0 {
                 let item_id = SendMessageW(hwnd, LB_GETITEMDATA, wparam(idx as u32), lparam(0)) as i64;
                 if let Some(ref state) = PANEL_STATE {
