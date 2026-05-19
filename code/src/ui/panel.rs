@@ -649,7 +649,16 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             }
         }
         WM_ACTIVATE => {
-            if (w & 0xFFFF) as u32 == WA_INACTIVE { hide_panel(hwnd); }
+            if (w & 0xFFFF) as u32 == WA_INACTIVE {
+                // 如果是预览窗口激活（点击预览窗口标题栏等），面板不隐藏
+                let deactivated_hwnd = HWND(l as isize);
+                if let Some(ref state) = PANEL_STATE {
+                    if deactivated_hwnd == state.preview_hwnd {
+                        return DefWindowProcW(hwnd, msg, w, l);
+                    }
+                }
+                hide_panel(hwnd);
+            }
             DefWindowProcW(hwnd, msg, w, l)
         }
         WM_KEYDOWN => {
