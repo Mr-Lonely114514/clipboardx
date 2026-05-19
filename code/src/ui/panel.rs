@@ -20,6 +20,7 @@ pub struct PanelState {
     pub list_orig_proc: isize,
     pub preview_hwnd: HWND,
     pub preview_orig_proc: isize,
+    pub preview_opening: bool, // CreateWindowExW 期间预防 WM_ACTIVATE 误判
 }
 
 static mut PANEL_STATE: Option<PanelState> = None;
@@ -142,6 +143,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             list_orig_proc: orig_proc,
             preview_hwnd: HWND(0),
             preview_orig_proc: 0,
+            preview_opening: false,
         };
         PANEL_STATE = Some(state);
         Ok(hwnd)
@@ -329,6 +331,10 @@ unsafe fn show_preview(record_id: i64) {
     let hfont = SendMessageW(state.list_hwnd, WM_GETFONT, wparam(0), lparam(0));
 
     // 创建弹出 Edit 控件（只读、多行、可垂直滚动）
+    // 先标记，防止 CreateWindowExW 触发的 WM_ACTIVATE 误判
+    if let Some(ref mut s) = PANEL_STATE {
+        s.preview_opening = true;
+    }
     let preview_hwnd = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
         w("EDIT").as_ptr(),
@@ -341,6 +347,9 @@ unsafe fn show_preview(record_id: i64) {
         GetModuleHandleW(std::ptr::null()),
         std::ptr::null(),
     );
+    if let Some(ref mut s) = PANEL_STATE {
+        s.preview_opening = false;
+    }
     if preview_hwnd.0 == 0 { return; }
 
     // 设置字体
@@ -653,7 +662,7 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                 // 如果是预览窗口激活（点击预览窗口标题栏等），面板不隐藏
                 let deactivated_hwnd = HWND(l as isize);
                 if let Some(ref state) = PANEL_STATE {
-                    if deactivated_hwnd == state.preview_hwnd {
+                    if state.preview_opening || deactivated_hwnd == state.preview_hwnd {
                         return DefWindowProcW(hwnd, msg, w, l);
                     }
                 }
