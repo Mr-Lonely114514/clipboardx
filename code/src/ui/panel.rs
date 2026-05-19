@@ -13,6 +13,7 @@ pub struct PanelState {
     pub list_hwnd: HWND,
     pub btn_delete: HWND,
     pub btn_confirm: HWND,
+    pub btn_exit: HWND,
     pub app_state: Arc<Mutex<AppState>>,
     pub prev_foreground: HWND,
     pub delete_mode: bool,
@@ -26,7 +27,7 @@ static mut PANEL_STATE: Option<PanelState> = None;
 const ID_LIST_BOX: u32 = 1002;
 const ID_BTN_DELETE: u32 = 1003;
 const ID_BTN_CONFIRM: u32 = 1004;
-
+const ID_BTN_EXIT: u32 = 1005;
 fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -109,6 +110,17 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         );
         SendMessageW(btn_delete, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
 
+        // "退出" 按钮
+        let btn_exit = CreateWindowExW(
+            0,
+            btn_class.as_ptr(),
+            w("✕").as_ptr(),
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            176, 456, 38, 28,
+            hwnd, HMENU(ID_BTN_EXIT as isize), hinst, std::ptr::null(),
+        );
+        SendMessageW(btn_exit, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
+
         // "确认删除" 按钮（初始隐藏，进入删除模式后显示）
         let btn_confirm = CreateWindowExW(
             0,
@@ -124,7 +136,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         let orig_proc = SetWindowLongPtrW(list_hwnd, GWLP_WNDPROC, list_box_proc as isize);
         let state = PanelState {
             hwnd, list_hwnd,
-            btn_delete, btn_confirm,
+            btn_delete, btn_confirm, btn_exit,
             app_state, prev_foreground: HWND(0),
             delete_mode: false, checked_ids: HashSet::new(),
             list_orig_proc: orig_proc,
@@ -480,6 +492,10 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                     confirm_delete();
                     0
                 }
+                ID_BTN_EXIT if code == BN_CLICKED => {
+                    hide_panel(hwnd);
+                    0
+                }
                 ID_LIST_BOX if code == LBN_SELCHANGE => {
                     if let Some(ref state) = PANEL_STATE {
                         if state.delete_mode {
@@ -489,22 +505,9 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                             let sel = SendMessageW(state.list_hwnd, LB_GETCURSEL, wparam(0), lparam(0));
                             if sel >= 0 {
                                 let item_id = SendMessageW(state.list_hwnd, LB_GETITEMDATA, wparam(sel as u32), lparam(0));
-                                if app.config.interaction_mode == InteractionMode::AutoPaste {
-                                    drop(app);
-                                    hide_panel(hwnd);
-                                    std::thread::sleep(std::time::Duration::from_millis(50));
-                                    if let Some(ref state) = PANEL_STATE {
-                                        if state.prev_foreground.0 != 0 {
-                                            SetForegroundWindow(state.prev_foreground);
-                                        }
-                                    }
-                                    std::thread::sleep(std::time::Duration::from_millis(20));
-                                    do_paste(item_id as i64);
-                                } else {
-                                    drop(app);
-                                    writeback_only(item_id as i64);
-                                    show_preview(item_id as i64);
-                                }
+                                drop(app);
+                                writeback_only(item_id as i64);
+                                show_preview(item_id as i64);
                             }
                         }
                     }
