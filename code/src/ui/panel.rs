@@ -198,13 +198,13 @@ unsafe fn refresh_list() {
 }
 
 fn format_preview(record: &crate::storage::models::ClipRecord) -> String {
-    let max = 70usize;
+    let max = 55usize;
     let preview = match record.content_type.as_str() {
         "image" => "[图片]".to_string(),
         "file" => record.content_text.as_ref().map(|t| truncate(t, max)).unwrap_or_else(|| "[文件]".to_string()),
         _ => record.content_text.as_ref().map(|t| truncate(t, max)).unwrap_or_else(|| "[空]".to_string()),
     };
-    let time = record.created_at.format("%H:%M").to_string();
+    let time = record.created_at.format("%Y.%m.%d %H:%M").to_string();
     let fav = if record.is_favorite { " ★" } else { "" };
     format!("{}{}  {}", preview, fav, time)
 }
