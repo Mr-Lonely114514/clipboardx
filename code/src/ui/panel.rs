@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
 
 use crate::app::AppState;
-use crate::utils::config::InteractionMode;
 use crate::win32::*;
 use crate::clipboard::recorder::ClipboardRecorder;
 use crate::storage::repository::Repository;
@@ -110,13 +109,13 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         );
         SendMessageW(btn_delete, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
 
-        // "退出" 按钮
+        // "退出" 按钮（删除按钮右侧）
         let btn_exit = CreateWindowExW(
             0,
             btn_class.as_ptr(),
             w("✕").as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            176, 456, 38, 28,
+            196, 456, 38, 28,
             hwnd, HMENU(ID_BTN_EXIT as isize), hinst, std::ptr::null(),
         );
         SendMessageW(btn_exit, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
@@ -507,7 +506,6 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                                 let item_id = SendMessageW(state.list_hwnd, LB_GETITEMDATA, wparam(sel as u32), lparam(0));
                                 drop(app);
                                 writeback_only(item_id as i64);
-                                show_preview(item_id as i64);
                             }
                         }
                     }
