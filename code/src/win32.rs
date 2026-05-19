@@ -50,6 +50,9 @@ pub struct HIMAGELIST(pub isize);
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HMONITOR(pub isize);
 
+pub type HDC = isize;
+pub type COLORREF = u32;
+
 pub type BOOL = i32;
 pub type LRESULT = isize;
 pub type LPARAM = isize;
@@ -96,6 +99,31 @@ impl Default for MSG {
             pt: POINT::default(),
         }
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DRAWITEMSTRUCT {
+    pub CtlType: u32,
+    pub CtlID: u32,
+    pub itemID: u32,
+    pub itemAction: u32,
+    pub itemState: u32,
+    pub hwndItem: HWND,
+    pub hDC: HDC,
+    pub rcItem: RECT,
+    pub itemData: isize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MEASUREITEMSTRUCT {
+    pub CtlType: u32,
+    pub CtlID: u32,
+    pub itemID: u32,
+    pub itemWidth: u32,
+    pub itemHeight: u32,
+    pub itemData: isize,
 }
 
 #[repr(C)]
@@ -212,6 +240,7 @@ pub const WM_KEYDOWN: u32 = 0x0100;
 pub const WM_SETFONT: u32 = 0x0030;
 pub const WM_GETFONT: u32 = 0x0031;
 pub const WM_HOTKEY: u32 = 0x0312;
+pub const WM_LBUTTONDOWN: u32 = 0x0201;
 pub const WM_LBUTTONUP: u32 = 0x0202;
 pub const WM_LBUTTONDBLCLK: u32 = 0x0203;
 pub const WM_RBUTTONUP: u32 = 0x0205;
@@ -276,6 +305,13 @@ pub const CB_SETCURSEL: u32 = 0x014E;
 pub const CB_GETCURSEL: u32 = 0x0147;
 pub const LBS_NOTIFY: u32 = 0x0001;
 pub const LBS_NOINTEGRALHEIGHT: u32 = 0x0100;
+pub const LBS_OWNERDRAWFIXED: u32 = 0x0010;
+pub const LBS_HASSTRINGS: u32 = 0x0040;
+
+pub const WM_DRAWITEM: u32 = 0x002B;
+pub const WM_MEASUREITEM: u32 = 0x002C;
+
+pub const ODS_SELECTED: u32 = 0x0001;
 
 // ListBox 消息
 pub const LB_ADDSTRING: u32 = 0x0180;
@@ -294,6 +330,20 @@ pub const LB_ITEMFROMPOINT: u32 = 0x01A9;
 // ListBox 通知
 pub const LBN_SELCHANGE: u32 = 1;
 pub const LBN_DBLCLK: u32 = 2;
+
+pub const DT_SINGLELINE: u32 = 0x00000020;
+pub const DT_VCENTER: u32 = 0x00000004;
+pub const DT_RIGHT: u32 = 0x00000002;
+pub const DT_CENTER: u32 = 0x00000001;
+pub const DT_END_ELLIPSIS: u32 = 0x00008000;
+pub const DT_NOPREFIX: u32 = 0x00000800;
+
+pub const COLOR_WINDOW: i32 = 5;
+pub const COLOR_WINDOWTEXT: i32 = 8;
+pub const COLOR_HIGHLIGHT: i32 = 13;
+pub const COLOR_HIGHLIGHTTEXT: i32 = 14;
+
+pub const TRANSPARENT: i32 = 1;
 
 // Edit 通知
 pub const EN_CHANGE: u32 = 0x0300;
@@ -406,6 +456,14 @@ pub fn lparam(v: isize) -> LPARAM { v as LPARAM }
 pub fn LOWORD(dw: u32) -> u16 { (dw & 0xFFFF) as u16 }
 pub fn HIWORD(dw: u32) -> u16 { ((dw >> 16) & 0xFFFF) as u16 }
 
+pub fn MAKELPARAM(lo: u16, hi: u16) -> LPARAM {
+    ((lo as u32) | ((hi as u32) << 16)) as LPARAM
+}
+
+pub fn RGB(r: u8, g: u8, b: u8) -> COLORREF {
+    (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
+}
+
 // ─── FFI 声明 ───
 
 #[link(name = "user32")]
@@ -471,6 +529,9 @@ extern "system" {
     pub fn UnregisterHotKey(hwnd: HWND, id: i32) -> BOOL;
     pub fn SendInput(cInputs: u32, pInputs: *const INPUT, cbSize: i32) -> u32;
     pub fn keybd_event(bVk: u8, bScan: u8, dwFlags: u32, dwExtraInfo: usize);
+    pub fn FillRect(hDC: HDC, lprc: *const RECT, hbr: isize) -> i32;
+    pub fn DrawTextW(hDC: HDC, lpchText: *const u16, cchText: i32, lprc: *mut RECT, format: u32) -> i32;
+    pub fn GetSysColorBrush(nIndex: i32) -> isize;
 }
 
 #[link(name = "gdi32")]
@@ -482,7 +543,8 @@ extern "system" {
         iCharSet: u32, iOutPrecision: u32, iClipPrecision: u32,
         iQuality: u32, iPitchAndFamily: u32, pszFaceName: *const u16,
     ) -> HFONT;
-    pub fn RGB(r: u8, g: u8, b: u8) -> u32;
+    pub fn SetTextColor(hdc: HDC, color: COLORREF) -> COLORREF;
+    pub fn SetBkMode(hdc: HDC, mode: i32) -> i32;
     pub fn GlobalAlloc(uFlags: u32, dwBytes: usize) -> HGLOBAL;
     pub fn GlobalLock(hMem: HGLOBAL) -> *mut c_void;
     pub fn GlobalUnlock(hMem: HGLOBAL) -> BOOL;

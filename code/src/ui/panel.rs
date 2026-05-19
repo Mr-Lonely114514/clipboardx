@@ -85,7 +85,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             WS_EX_CLIENTEDGE,
             list_class.as_ptr(),
             std::ptr::null(),
-            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
             0, 6, 420, 444,
             hwnd, HMENU(ID_LIST_BOX as isize), hinst, std::ptr::null(),
         );
@@ -446,6 +446,27 @@ unsafe fn toggle_check_selected() {
 unsafe extern "system" fn list_box_proc(
     hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM,
 ) -> LRESULT {
+    if msg == WM_LBUTTONDOWN {
+        let x = ((l as u32) & 0xFFFF) as i32;
+        let y = (((l as u32) >> 16) & 0xFFFF) as i32;
+        let mut rc = RECT::default();
+        GetClientRect(hwnd, &mut rc);
+        let width = rc.right;
+        // "right 24px = " area
+        if x >= width - 24 && x < width {
+            let lparam_val = MAKELPARAM(x as u16, y as u16);
+            let result = SendMessageW(hwnd, LB_ITEMFROMPOINT, wparam(0), lparam(lparam_val));
+            let item_idx = (result & 0xFFFF) as i32;
+            if item_idx >= 0 {
+                let item_id = SendMessageW(hwnd, LB_GETITEMDATA, wparam(item_idx as u32), lparam(0));
+                if item_id != -1 {
+                    show_preview(item_id as i64);
+                }
+            }
+            return 0;
+        }
+        // otherwise fall through to default
+    }
     if msg == WM_KEYDOWN {
         let vk = (w as u32 & 0xFFFF) as u16;
         match vk {
@@ -479,6 +500,48 @@ unsafe extern "system" fn list_box_proc(
 unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
         WM_CLOSE => { hide_panel(hwnd); 0 }
+        WM_MEASUREITEM => {
+            // lParam points to MEASUREITEMSTRUCT
+            let mis = &mut *(l as *mut MEASUREITEMSTRUCT);
+            mis.itemHeight = 24; // each item 24 pixels tall
+            1
+        }
+        WM_DRAWITEM => {
+            let dis = &*(l as *const DRAWITEMSTRUCT);
+            if dis.itemID == 0xFFFFFFFF { return 1; } // LB_ERR
+            let hdc = dis.hDC;
+            
+            // Fill background
+            if (dis.itemState & ODS_SELECTED) != 0 {
+                FillRect(hdc, &dis.rcItem, GetSysColorBrush(COLOR_HIGHLIGHT));
+                SetTextColor(hdc, 0x00FFFFFF); // white text on highlight
+            } else {
+                FillRect(hdc, &dis.rcItem, GetSysColorBrush(COLOR_WINDOW));
+                SetTextColor(hdc, 0x00000000); // black text on white
+            }
+            SetBkMode(hdc, TRANSPARENT);
+            
+            // Draw item text (left side, with margin for "button on right)
+            let mut txt_rc = dis.rcItem;
+            txt_rc.left += 4;
+            txt_rc.right -= 26; // leave space for "button
+            
+            let mut buf = [0u16; 512];
+            let len = SendMessageW(dis.hwndItem, LB_GETTEXT, wparam(dis.itemID), lparam(buf.as_mut_ptr() as isize));
+            if len > 0 && len < 512 {
+                DrawTextW(hdc, buf.as_ptr(), len as i32, &mut txt_rc, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+            }
+            
+            // Draw ">" button
+            let mut btn_rc = dis.rcItem;
+            btn_rc.left = btn_rc.right - 24;
+            // Draw a faint border for the button area
+            SetTextColor(hdc, 0x00FF0000); // blue for "
+            let btn_txt = [0x003Eu16, 0u16]; // ">" + null
+            DrawTextW(hdc, btn_txt.as_ptr(), 1, &mut btn_rc, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+            
+            1
+        }
         WM_COMMAND => {
             let id = LOWORD(w as u32) as u32;
             let code = HIWORD(w as u32) as u32;
