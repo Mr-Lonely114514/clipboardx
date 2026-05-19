@@ -19,6 +19,7 @@ pub struct PanelState {
     pub checked_ids: HashSet<i64>,
     pub list_orig_proc: isize,
     pub preview_hwnd: HWND,
+    pub preview_orig_proc: isize,
 }
 
 static mut PANEL_STATE: Option<PanelState> = None;
@@ -140,6 +141,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             delete_mode: false, checked_ids: HashSet::new(),
             list_orig_proc: orig_proc,
             preview_hwnd: HWND(0),
+            preview_orig_proc: 0,
         };
         PANEL_STATE = Some(state);
         Ok(hwnd)
@@ -148,6 +150,8 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
 
 pub fn show_panel(hwnd: HWND) {
     unsafe {
+        // 打开面板前关闭任何遗留的预览窗口
+        close_preview();
         // 重置删除模式
         if let Some(ref mut state) = PANEL_STATE {
             state.delete_mode = false;
@@ -243,6 +247,43 @@ fn truncate(s: &str, max: usize) -> String {
 /// 预览内容显示的最大字符数
 const MAX_PREVIEW_CHARS: usize = 8000;
 
+/// 预览窗口过程：处理 Escape 关闭
+unsafe extern "system" fn preview_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    match msg {
+        WM_KEYDOWN => {
+            let vk = (w as u32 & 0xFFFF) as u16;
+            if vk == VK_ESCAPE {
+                if let Some(ref mut state) = PANEL_STATE {
+                    if state.preview_hwnd == hwnd {
+                        DestroyWindow(hwnd);
+                        state.preview_hwnd = HWND(0);
+                    }
+                }
+                return 0;
+            }
+        }
+        WM_NCACTIVATE => {
+            // 窗口失活时自动关闭
+            if w == 0 {
+                if let Some(ref mut state) = PANEL_STATE {
+                    if state.preview_hwnd == hwnd {
+                        DestroyWindow(hwnd);
+                        state.preview_hwnd = HWND(0);
+                    }
+                }
+                return 0;
+            }
+        }
+        _ => {}
+    }
+    let orig = PANEL_STATE.as_ref().map(|s| s.preview_orig_proc).unwrap_or(0);
+    if orig != 0 {
+        CallWindowProcW(orig, hwnd, msg, w, l)
+    } else {
+        DefWindowProcW(hwnd, msg, w, l)
+    }
+}
+
 /// 关闭预览弹出窗口
 unsafe fn close_preview() {
     if let Some(ref mut state) = PANEL_STATE {
@@ -307,6 +348,12 @@ unsafe fn show_preview(record_id: i64) {
     // 设置字体
     if hfont != 0 {
         SendMessageW(preview_hwnd, WM_SETFONT, wparam(hfont as u32), lparam(0));
+    }
+
+    // 子类化编辑控件，处理 Escape 关闭
+    let orig_edit = SetWindowLongPtrW(preview_hwnd, GWLP_WNDPROC, preview_wnd_proc as isize);
+    if let Some(ref mut state) = PANEL_STATE {
+        state.preview_orig_proc = orig_edit;
     }
 
     // 定位：面板右侧，若超出屏幕则放在左侧
@@ -464,6 +511,10 @@ unsafe extern "system" fn list_box_proc(
                 let item_id = SendMessageW(hwnd, LB_GETITEMDATA, wparam(item_idx as u32), lparam(0));
                 if item_id != -1 {
                     show_preview(item_id as i64);
+                    // 预览显示后隐藏面板，两者不同时显示
+                    if let Some(ref state) = PANEL_STATE {
+                        hide_panel(state.hwnd);
+                    }
                 }
             }
             return 0;
