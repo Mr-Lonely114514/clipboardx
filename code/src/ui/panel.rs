@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
 
 use crate::app::AppState;
 use crate::utils::config::InteractionMode;
@@ -11,14 +12,21 @@ pub struct PanelState {
     pub hwnd: HWND,
     pub list_hwnd: HWND,
     pub search_hwnd: HWND,
+    pub btn_delete: HWND,
+    pub btn_confirm: HWND,
     pub app_state: Arc<Mutex<AppState>>,
-    pub prev_foreground: HWND, // 记录打开面板前的前景窗口
+    pub prev_foreground: HWND,
+    pub delete_mode: bool,
+    pub checked_ids: HashSet<i64>,
+    pub list_orig_proc: isize,
 }
 
 static mut PANEL_STATE: Option<PanelState> = None;
 
 const ID_SEARCH_BOX: u32 = 1001;
 const ID_LIST_BOX: u32 = 1002;
+const ID_BTN_DELETE: u32 = 1003;
+const ID_BTN_CONFIRM: u32 = 1004;
 
 fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -98,7 +106,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             list_class.as_ptr(),
             std::ptr::null(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-            0, 40, 420, 400,
+            0, 40, 420, 410,
             hwnd, HMENU(ID_LIST_BOX as isize), hinst, std::ptr::null(),
         );
 
@@ -109,13 +117,52 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         );
         SendMessageW(list_hwnd, WM_SETFONT, wparam(hfont_list.0 as u32), lparam(0));
 
-        PANEL_STATE = Some(PanelState { hwnd, list_hwnd, search_hwnd, app_state, prev_foreground: HWND(0) });
+        // "删除" 按钮
+        let btn_class = w("BUTTON");
+        let btn_delete = CreateWindowExW(
+            0,
+            btn_class.as_ptr(),
+            w("删除").as_ptr(),
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            60, 456, 130, 28,
+            hwnd, HMENU(ID_BTN_DELETE as isize), hinst, std::ptr::null(),
+        );
+        SendMessageW(btn_delete, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
+
+        // "确认删除" 按钮
+        let btn_confirm = CreateWindowExW(
+            0,
+            btn_class.as_ptr(),
+            w("确认删除").as_ptr(),
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            220, 456, 130, 28,
+            hwnd, HMENU(ID_BTN_CONFIRM as isize), hinst, std::ptr::null(),
+        );
+        SendMessageW(btn_confirm, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
+
+        // 子类化列表框：拦截键盘消息
+        let orig_proc = SetWindowLongPtrW(list_hwnd, GWLP_WNDPROC, list_box_proc as isize);
+        let state = PanelState {
+            hwnd, list_hwnd, search_hwnd,
+            btn_delete, btn_confirm,
+            app_state, prev_foreground: HWND(0),
+            delete_mode: false, checked_ids: HashSet::new(),
+            list_orig_proc: orig_proc,
+        };
+        PANEL_STATE = Some(state);
         Ok(hwnd)
     }
 }
 
 pub fn show_panel(hwnd: HWND) {
     unsafe {
+        // 重置删除模式
+        if let Some(ref mut state) = PANEL_STATE {
+            state.delete_mode = false;
+            state.checked_ids.clear();
+            // 更新按钮文字
+            SetWindowTextW(state.btn_delete, w("删除").as_ptr());
+        }
         // 记录打开面板前的前景窗口
         let fg = GetForegroundWindow();
         if fg != hwnd {
@@ -128,9 +175,9 @@ pub fn show_panel(hwnd: HWND) {
         GetCursorPos(&mut pt);
         let x = if pt.x - 210 < 0 { 10 } else { pt.x - 210 };
         let y = pt.y + 10;
-        SetWindowPos(hwnd, HWND_TOPMOST, x, y, 420, 480, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+        SetWindowPos(hwnd, HWND_TOPMOST, x, y, 420, 500, SWP_SHOWWINDOW | SWP_NOACTIVATE);
         if let Some(ref state) = PANEL_STATE {
-            SetFocus(state.search_hwnd);
+            SetFocus(state.list_hwnd);
         }
     }
 }
@@ -155,10 +202,16 @@ unsafe fn refresh_list() {
     if let Ok(mut app) = state.app_state.lock() {
         app.refresh_records();
         let records = app.records.clone();
+        let delete_mode = state.delete_mode;
         drop(app);
         for record in &records {
+            let checked = if delete_mode {
+                if state.checked_ids.contains(&record.id) { "☑ " } else { "☐ " }
+            } else {
+                ""
+            };
             let preview = format_preview(record);
-            let wide = w(&preview);
+            let wide = w(&format!("{}{}", checked, preview));
             let idx = SendMessageW(state.list_hwnd, LB_ADDSTRING, wparam(0), lparam(wide.as_ptr() as isize));
             SendMessageW(state.list_hwnd, LB_SETITEMDATA, wparam(idx as u32), lparam(record.id as isize));
         }
@@ -230,6 +283,98 @@ unsafe fn writeback_only(record_id: i64) {
     }
 }
 
+/// 切换删除模式（开关）
+unsafe fn toggle_delete_mode() {
+    if let Some(ref mut state) = PANEL_STATE {
+        state.delete_mode = !state.delete_mode;
+        if !state.delete_mode {
+            // 退出删除模式，清空勾选
+            state.checked_ids.clear();
+        }
+        SetWindowTextW(state.btn_delete, w(if state.delete_mode { "取消" } else { "删除" }).as_ptr());
+        // 隐藏/显示"确认删除"按钮
+        ShowWindow(state.btn_confirm, if state.delete_mode { SW_SHOW } else { SW_HIDE });
+    }
+    refresh_list();
+}
+
+/// 确认删除：删除所有勾选的记录
+unsafe fn confirm_delete() {
+    if let Some(ref mut state) = PANEL_STATE {
+        if state.checked_ids.is_empty() {
+            return;
+        }
+        // 显示确认对话框
+        let msg = w(&format!("确定要删除 {} 条记录吗？", state.checked_ids.len()));
+        let title = w("确认删除");
+        let ret = MessageBoxW(state.hwnd, msg.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONWARNING);
+        if ret != IDYES {
+            return;
+        }
+        // 删除所有勾选的记录
+        for id in state.checked_ids.drain() {
+            if let Ok(mut app) = state.app_state.lock() {
+                app.delete_record(id);
+            }
+        }
+        state.delete_mode = false;
+        SetWindowTextW(state.btn_delete, w("删除").as_ptr());
+        ShowWindow(state.btn_confirm, SW_HIDE);
+    }
+    refresh_list();
+}
+
+/// 切换当前选中记录的勾选状态
+unsafe fn toggle_check_selected() {
+    // 第一步：只读方式获取当前选中记录的 ID
+    let item_id = {
+        let state = match PANEL_STATE.as_ref() { Some(s) => s, None => return };
+        if !state.delete_mode { return; }
+        let sel = SendMessageW(state.list_hwnd, LB_GETCURSEL, wparam(0), lparam(0));
+        if sel < 0 { return; }
+        SendMessageW(state.list_hwnd, LB_GETITEMDATA, wparam(sel as u32), lparam(0)) as i64
+    };
+    // 第二步：通过可变引用修改 checked_ids
+    if let Some(ref mut state) = PANEL_STATE {
+        if state.checked_ids.contains(&item_id) {
+            state.checked_ids.remove(&item_id);
+        } else {
+            state.checked_ids.insert(item_id);
+        }
+    }
+    refresh_list();
+}
+
+/// 列表框子类化窗口过程 -- 拦截 Escape 键和 Space 键（删除模式下切换勾选）
+unsafe extern "system" fn list_box_proc(
+    hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM,
+) -> LRESULT {
+    if msg == WM_KEYDOWN {
+        let vk = (w as u32 & 0xFFFF) as u16;
+        match vk {
+            VK_ESCAPE => {
+                if let Some(ref state) = PANEL_STATE {
+                    hide_panel(state.hwnd);
+                }
+                return 0;
+            }
+            VK_SPACE => {
+                // 删除模式下按空格切换勾选
+                if let Some(ref state) = PANEL_STATE {
+                    if state.delete_mode {
+                        toggle_check_selected();
+                        return 0;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // 其余消息走默认列表框处理
+    let orig = PANEL_STATE.as_ref().map(|s| s.list_orig_proc).unwrap_or(0);
+    CallWindowProcW(orig, hwnd, msg, w, l)
+}
+
 unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
         WM_CLOSE => { hide_panel(hwnd); 0 }
@@ -237,52 +382,65 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             let id = LOWORD(w as u32) as u32;
             let code = HIWORD(w as u32) as u32;
             match id {
-                ID_LIST_BOX if code == LBN_DBLCLK => {
-                    let sel = SendMessageW(PANEL_STATE.as_ref().unwrap().list_hwnd, LB_GETCURSEL, wparam(0), lparam(0));
-                    if sel >= 0 {
-                        let item_id = SendMessageW(PANEL_STATE.as_ref().unwrap().list_hwnd, LB_GETITEMDATA, wparam(sel as u32), lparam(0));
-                        hide_panel(hwnd);           // 先隐藏面板，让焦点回到原窗口
-                        std::thread::sleep(std::time::Duration::from_millis(50)); // 等待焦点切回
-                        // 显式恢复前一窗口的前景焦点
-                        if let Some(ref state) = PANEL_STATE {
-                            if state.prev_foreground.0 != 0 {
-                                SetForegroundWindow(state.prev_foreground);
-                            }
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(20));
-                        // 调试日志
-                        {
-                            let dbg_msg = format!("dblclk: id={}, sel={}\n", item_id, sel);
-                            let _ = std::fs::write("C:\\Users\\lenovo\\Desktop\\paste_debug.txt", dbg_msg);
-                        }
-                        do_paste(item_id as i64);   // 再写入剪切板 + 模拟 Ctrl+V
-                    }
+                ID_BTN_DELETE if code == BN_CLICKED => {
+                    toggle_delete_mode();
+                    0
+                }
+                ID_BTN_CONFIRM if code == BN_CLICKED => {
+                    confirm_delete();
                     0
                 }
                 ID_LIST_BOX if code == LBN_SELCHANGE => {
                     if let Some(ref state) = PANEL_STATE {
-                        if let Ok(app) = state.app_state.lock() {
+                        if state.delete_mode {
+                            // 删除模式下点击 = 切换勾选
+                            toggle_check_selected();
+                        } else if let Ok(app) = state.app_state.lock() {
                             let sel = SendMessageW(state.list_hwnd, LB_GETCURSEL, wparam(0), lparam(0));
                             if sel >= 0 {
                                 let item_id = SendMessageW(state.list_hwnd, LB_GETITEMDATA, wparam(sel as u32), lparam(0));
                                 if app.config.interaction_mode == InteractionMode::AutoPaste {
                                     drop(app);
-                                    hide_panel(hwnd);           // 先隐藏面板，让焦点回到原窗口
-                                    std::thread::sleep(std::time::Duration::from_millis(50)); // 等待焦点切回
-                                    // 显式恢复前一窗口的前景焦点
+                                    hide_panel(hwnd);
+                                    std::thread::sleep(std::time::Duration::from_millis(50));
                                     if let Some(ref state) = PANEL_STATE {
                                         if state.prev_foreground.0 != 0 {
                                             SetForegroundWindow(state.prev_foreground);
                                         }
                                     }
                                     std::thread::sleep(std::time::Duration::from_millis(20));
-                                    do_paste(item_id as i64);   // 再写入剪切板 + 模拟 Ctrl+V
+                                    do_paste(item_id as i64);
                                 } else {
                                     drop(app);
                                     writeback_only(item_id as i64);
                                 }
                             }
                         }
+                    }
+                    0
+                }
+                ID_LIST_BOX if code == LBN_DBLCLK => {
+                    if let Some(ref state) = PANEL_STATE {
+                        if state.delete_mode {
+                            toggle_check_selected();
+                            return 0;
+                        }
+                    }
+                    // 正常模式：双击粘贴
+                    let sel = SendMessageW(PANEL_STATE.as_ref().unwrap().list_hwnd, LB_GETCURSEL, wparam(0), lparam(0));
+                    if sel >= 0 {
+                        let item_id = SendMessageW(PANEL_STATE.as_ref().unwrap().list_hwnd, LB_GETITEMDATA, wparam(sel as u32), lparam(0));
+                        hide_panel(hwnd);
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        if let Some(ref state) = PANEL_STATE {
+                            if state.prev_foreground.0 != 0 {
+                                SetForegroundWindow(state.prev_foreground);
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        let dbg_msg = format!("dblclk: id={}, sel={}\n", item_id, sel);
+                        let _ = std::fs::write("C:\\Users\\lenovo\\Desktop\\paste_debug.txt", dbg_msg);
+                        do_paste(item_id as i64);
                     }
                     0
                 }
@@ -306,7 +464,8 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             DefWindowProcW(hwnd, msg, w, l)
         }
         WM_KEYDOWN => {
-            if (w as u32 & 0xFFFF) == VK_ESCAPE as u32 { hide_panel(hwnd); 0 }
+            let vk = (w as u32 & 0xFFFF) as u16;
+            if vk == VK_ESCAPE { hide_panel(hwnd); 0 }
             else { DefWindowProcW(hwnd, msg, w, l) }
         }
         _ => DefWindowProcW(hwnd, msg, w, l),

@@ -185,6 +185,15 @@ pub const WS_EX_DLGMODALFRAME: u32 = 0x00000001;
 pub const WS_EX_CLIENTEDGE: u32 = 0x00000200;
 pub const WS_EX_STATICEDGE: u32 = 0x00020000;
 pub const WS_EX_TRANSPARENT: u32 = 0x00000020;
+pub const BN_CLICKED: u32 = 0;
+pub const BS_PUSHBUTTON: u32 = 0x00000000;
+pub const BS_DEFPUSHBUTTON: u32 = 0x00000001;
+pub const BS_AUTOCHECKBOX: u32 = 0x00000003;
+pub const BST_CHECKED: u32 = 0x0001;
+pub const BST_UNCHECKED: u32 = 0x0000;
+pub const BM_SETCHECK: u32 = 0x00F1;
+pub const BM_GETCHECK: u32 = 0x00F0;
+pub const CBS_DROPDOWNLIST: u32 = 0x0003;
 
 // 类样式
 pub const CS_HREDRAW: u32 = 0x0002;
@@ -257,14 +266,6 @@ pub const ES_AUTOHSCROLL: u32 = 0x0080;
 pub const ES_READONLY: u32 = 0x0800;
 pub const ES_CENTER: u32 = 0x0001;
 pub const ES_NUMBER: u32 = 0x2000;
-pub const BS_PUSHBUTTON: u32 = 0x00000000;
-pub const BS_DEFPUSHBUTTON: u32 = 0x00000001;
-pub const BS_AUTOCHECKBOX: u32 = 0x00000003;
-pub const BST_CHECKED: u32 = 0x0001;
-pub const BST_UNCHECKED: u32 = 0x0000;
-pub const BM_SETCHECK: u32 = 0x00F1;
-pub const BM_GETCHECK: u32 = 0x00F0;
-pub const CBS_DROPDOWNLIST: u32 = 0x0003;
 pub const CBS_HASSTRINGS: u32 = 0x0200;
 pub const CB_ADDSTRING: u32 = 0x0143;
 pub const CB_SETCURSEL: u32 = 0x014E;
@@ -374,6 +375,7 @@ pub const MOD_NOREPEAT: u32 = 0x4000;
 
 // GDI
 pub const WHITE_BRUSH: u32 = 0;
+pub const GWLP_WNDPROC: i32 = -4;
 pub const LWA_ALPHA: u32 = 0x00000002;
 pub const FW_NORMAL: u32 = 400;
 pub const DEFAULT_CHARSET: u32 = 1;
@@ -441,6 +443,8 @@ extern "system" {
     pub fn TrackPopupMenu(hMenu: HMENU, uFlags: u32, x: i32, y: i32, nReserved: i32, hWnd: HWND, prcRect: *const RECT) -> BOOL;
     pub fn DestroyMenu(hMenu: HMENU) -> BOOL;
     pub fn MessageBoxW(hWnd: HWND, lpText: *const u16, lpCaption: *const u16, uType: u32) -> i32;
+    pub fn SetWindowLongPtrW(hWnd: HWND, nIndex: i32, dwNewLong: isize) -> isize;
+    pub fn CallWindowProcW(lpPrevWndFunc: isize, hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
     pub fn SetLayeredWindowAttributes(hwnd: HWND, crKey: u32, bAlpha: u8, dwFlags: u32) -> BOOL;
     pub fn SendMessageW(hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
     pub fn PostMessageW(hWnd: HWND, Msg: u32, wParam: WPARAM, lParam: LPARAM) -> BOOL;
