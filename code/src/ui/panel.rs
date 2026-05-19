@@ -113,9 +113,9 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         let btn_exit = CreateWindowExW(
             0,
             btn_class.as_ptr(),
-            w("✕").as_ptr(),
+            w("退出").as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            196, 456, 38, 28,
+            230, 456, 130, 28,
             hwnd, HMENU(ID_BTN_EXIT as isize), hinst, std::ptr::null(),
         );
         SendMessageW(btn_exit, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
@@ -126,7 +126,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             btn_class.as_ptr(),
             w("确认删除").as_ptr(),
             WS_CHILD | BS_PUSHBUTTON,
-            220, 456, 130, 28,
+            230, 456, 130, 28,
             hwnd, HMENU(ID_BTN_CONFIRM as isize), hinst, std::ptr::null(),
         );
         SendMessageW(btn_confirm, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
@@ -152,8 +152,9 @@ pub fn show_panel(hwnd: HWND) {
         if let Some(ref mut state) = PANEL_STATE {
             state.delete_mode = false;
             state.checked_ids.clear();
-            // 更新按钮文字
             SetWindowTextW(state.btn_delete, w("删除").as_ptr());
+            ShowWindow(state.btn_confirm, SW_HIDE);
+            ShowWindow(state.btn_exit, SW_SHOW);
         }
         // 记录打开面板前的前景窗口
         let fg = GetForegroundWindow();
@@ -389,8 +390,9 @@ unsafe fn toggle_delete_mode() {
             state.checked_ids.clear();
         }
         SetWindowTextW(state.btn_delete, w(if state.delete_mode { "取消" } else { "删除" }).as_ptr());
-        // 隐藏/显示"确认删除"按钮
+        // 隐藏/显示"确认删除"和"退出"按钮（互斥，避免重叠抢点击）
         ShowWindow(state.btn_confirm, if state.delete_mode { SW_SHOW } else { SW_HIDE });
+        ShowWindow(state.btn_exit, if state.delete_mode { SW_HIDE } else { SW_SHOW });
     }
     refresh_list();
 }
@@ -417,6 +419,7 @@ unsafe fn confirm_delete() {
         state.delete_mode = false;
         SetWindowTextW(state.btn_delete, w("删除").as_ptr());
         ShowWindow(state.btn_confirm, SW_HIDE);
+        ShowWindow(state.btn_exit, SW_SHOW);
     }
     refresh_list();
 }
