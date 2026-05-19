@@ -18,6 +18,7 @@ pub struct PanelState {
     pub delete_mode: bool,
     pub checked_ids: HashSet<i64>,
     pub list_orig_proc: isize,
+    pub preview_hwnd: HWND,
 }
 
 static mut PANEL_STATE: Option<PanelState> = None;
@@ -127,6 +128,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             app_state, prev_foreground: HWND(0),
             delete_mode: false, checked_ids: HashSet::new(),
             list_orig_proc: orig_proc,
+            preview_hwnd: HWND(0),
         };
         PANEL_STATE = Some(state);
         Ok(hwnd)
@@ -162,7 +164,10 @@ pub fn show_panel(hwnd: HWND) {
 }
 
 pub fn hide_panel(hwnd: HWND) {
-    unsafe { ShowWindow(hwnd, SW_HIDE); }
+    unsafe {
+        close_preview();
+        ShowWindow(hwnd, SW_HIDE);
+    }
 }
 
 pub fn toggle_panel(hwnd: HWND) {
@@ -220,6 +225,99 @@ fn truncate(s: &str, max: usize) -> String {
         format!("{}...", &line[..end])
     } else {
         line.to_string()
+    }
+}
+
+/// 预览内容显示的最大字符数
+const MAX_PREVIEW_CHARS: usize = 8000;
+
+/// 关闭预览弹出窗口
+unsafe fn close_preview() {
+    if let Some(ref mut state) = PANEL_STATE {
+        if state.preview_hwnd.0 != 0 {
+            DestroyWindow(state.preview_hwnd);
+            state.preview_hwnd = HWND(0);
+        }
+    }
+}
+
+/// 显示内容预览弹出窗（只读、可滚动、约 7 行高度）
+unsafe fn show_preview(record_id: i64) {
+    // 关闭之前的预览
+    close_preview();
+
+    let state = match PANEL_STATE.as_ref() { Some(s) => s, None => return };
+
+    // 从数据库获取记录全文
+    let content = if let Ok(app) = state.app_state.lock() {
+        let repo = Repository::new(&app.db);
+        match repo.find_by_id(record_id) {
+            Ok(Some(record)) => match record.content_type.as_str() {
+                "image" => "[图片]".to_string(),
+                _ => record.content_text.unwrap_or_else(|| "[空]".to_string()),
+            },
+            _ => return,
+        }
+    } else { return };
+
+    // 截断过长内容
+    let display = if content.chars().count() > MAX_PREVIEW_CHARS {
+        let truncated: String = content.chars().take(MAX_PREVIEW_CHARS).collect();
+        format!("{}\n\n...（内容过长，仅显示前 {} 字符）", truncated, MAX_PREVIEW_CHARS)
+    } else {
+        content
+    };
+
+    let wide = w(&display);
+
+    // 获取面板位置
+    let mut panel_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    GetWindowRect(state.hwnd, &mut panel_rect);
+
+    // 从列表框获取字体
+    let hfont = SendMessageW(state.list_hwnd, WM_GETFONT, wparam(0), lparam(0));
+
+    // 创建弹出 Edit 控件（只读、多行、可垂直滚动）
+    let preview_hwnd = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+        w("EDIT").as_ptr(),
+        wide.as_ptr(),
+        WS_POPUP | WS_VISIBLE | WS_BORDER | WS_VSCROLL
+            | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_NOHIDESEL,
+        0, 0, 400, 160,
+        HWND(0),
+        HMENU(0),
+        GetModuleHandleW(std::ptr::null()),
+        std::ptr::null(),
+    );
+    if preview_hwnd.0 == 0 { return; }
+
+    // 设置字体
+    if hfont != 0 {
+        SendMessageW(preview_hwnd, WM_SETFONT, wparam(hfont as u32), lparam(0));
+    }
+
+    // 定位：面板右侧，若超出屏幕则放在左侧
+    let preview_w = 400i32;
+    let preview_h = 160i32;
+    let mut x = panel_rect.right + 2;
+    let y = panel_rect.top;
+    // 粗略判断屏幕宽度（取面板所在监视器）
+    let monitor = MonitorFromPoint(POINT { x: panel_rect.left, y: panel_rect.top }, 0);
+    let mut mi = MONITORINFO { cbSize: 0, rcMonitor: RECT { left: 0, top: 0, right: 0, bottom: 0 }, rcWork: RECT { left: 0, top: 0, right: 0, bottom: 0 }, dwFlags: 0 };
+    mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    if GetMonitorInfoW(monitor, &mut mi) != FALSE && x + preview_w > mi.rcWork.right {
+        x = panel_rect.left - preview_w - 2;
+        if x < mi.rcWork.left {
+            x = mi.rcWork.left + 4; // 紧贴左边缘
+        }
+    }
+
+    SetWindowPos(preview_hwnd, HWND_TOPMOST, x, y, preview_w, preview_h, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+
+    // 保存句柄
+    if let Some(ref mut state) = PANEL_STATE {
+        state.preview_hwnd = preview_hwnd;
     }
 }
 
@@ -405,6 +503,7 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                                 } else {
                                     drop(app);
                                     writeback_only(item_id as i64);
+                                    show_preview(item_id as i64);
                                 }
                             }
                         }

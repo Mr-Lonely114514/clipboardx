@@ -210,6 +210,7 @@ pub const WM_NOTIFY: u32 = 0x004E;
 pub const WM_ACTIVATE: u32 = 0x0006;
 pub const WM_KEYDOWN: u32 = 0x0100;
 pub const WM_SETFONT: u32 = 0x0030;
+pub const WM_GETFONT: u32 = 0x0031;
 pub const WM_HOTKEY: u32 = 0x0312;
 pub const WM_LBUTTONUP: u32 = 0x0202;
 pub const WM_LBUTTONDBLCLK: u32 = 0x0203;
@@ -263,6 +264,9 @@ pub const MB_ICONWARNING: u32 = 0x00000030;
 pub const SS_RIGHT: u32 = 0x0002;
 pub const ES_LEFT: u32 = 0x0000;
 pub const ES_AUTOHSCROLL: u32 = 0x0080;
+pub const ES_MULTILINE: u32 = 0x0004;
+pub const ES_AUTOVSCROLL: u32 = 0x0040;
+pub const ES_NOHIDESEL: u32 = 0x0100;
 pub const ES_READONLY: u32 = 0x0800;
 pub const ES_CENTER: u32 = 0x0001;
 pub const ES_NUMBER: u32 = 0x2000;
@@ -285,6 +289,7 @@ pub const LB_GETTEXTLEN: u32 = 0x018A;
 pub const LB_GETCOUNT: u32 = 0x018B;
 pub const LB_GETITEMDATA: u32 = 0x0199;
 pub const LB_SETITEMDATA: u32 = 0x019A;
+pub const LB_ITEMFROMPOINT: u32 = 0x01A9;
 
 // ListBox 通知
 pub const LBN_SELCHANGE: u32 = 1;
@@ -433,6 +438,8 @@ extern "system" {
     pub fn IsWindowVisible(hWnd: HWND) -> BOOL;
     pub fn GetForegroundWindow() -> HWND;
     pub fn SetForegroundWindow(hWnd: HWND) -> BOOL;
+    pub fn GetWindowRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
+    pub fn GetClientRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
     pub fn GetCursorPos(lpPoint: *mut POINT) -> BOOL;
     pub fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> HCURSOR;
     pub fn LoadIconW(hInstance: HINSTANCE, lpIconName: *const u16) -> HICON;
