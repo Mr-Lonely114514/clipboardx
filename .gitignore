@@ -1,0 +1,13 @@
+# Rust build output
+code/target/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Tool
+.atomcode/
