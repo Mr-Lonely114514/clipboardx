@@ -247,24 +247,22 @@ fn truncate(s: &str, max: usize) -> String {
 /// 预览内容显示的最大字符数
 const MAX_PREVIEW_CHARS: usize = 8000;
 
-/// 预览窗口过程：处理 Escape 关闭
+/// 预览窗口过程：处理 Escape 和 X 按钮关闭
 unsafe extern "system" fn preview_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
+        WM_CLOSE => {
+            // X 按钮点击
+            if let Some(ref mut state) = PANEL_STATE {
+                if state.preview_hwnd == hwnd {
+                    DestroyWindow(hwnd);
+                    state.preview_hwnd = HWND(0);
+                }
+            }
+            return 0;
+        }
         WM_KEYDOWN => {
             let vk = (w as u32 & 0xFFFF) as u16;
             if vk == VK_ESCAPE {
-                if let Some(ref mut state) = PANEL_STATE {
-                    if state.preview_hwnd == hwnd {
-                        DestroyWindow(hwnd);
-                        state.preview_hwnd = HWND(0);
-                    }
-                }
-                return 0;
-            }
-        }
-        WM_NCACTIVATE => {
-            // 窗口失活时自动关闭
-            if w == 0 {
                 if let Some(ref mut state) = PANEL_STATE {
                     if state.preview_hwnd == hwnd {
                         DestroyWindow(hwnd);
@@ -335,7 +333,7 @@ unsafe fn show_preview(record_id: i64) {
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
         w("EDIT").as_ptr(),
         wide.as_ptr(),
-        WS_POPUP | WS_VISIBLE | WS_BORDER | WS_VSCROLL
+        WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_VSCROLL
             | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_NOHIDESEL,
         0, 0, 400, 160,
         HWND(0),
@@ -511,10 +509,6 @@ unsafe extern "system" fn list_box_proc(
                 let item_id = SendMessageW(hwnd, LB_GETITEMDATA, wparam(item_idx as u32), lparam(0));
                 if item_id != -1 {
                     show_preview(item_id as i64);
-                    // 预览显示后隐藏面板，两者不同时显示
-                    if let Some(ref state) = PANEL_STATE {
-                        hide_panel(state.hwnd);
-                    }
                 }
             }
             return 0;
