@@ -19,7 +19,6 @@ pub struct PanelState {
     pub checked_ids: HashSet<i64>,
     pub list_orig_proc: isize,
     pub preview_hwnd: HWND,
-    pub preview_item_id: i64,
 }
 
 static mut PANEL_STATE: Option<PanelState> = None;
@@ -130,7 +129,6 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             delete_mode: false, checked_ids: HashSet::new(),
             list_orig_proc: orig_proc,
             preview_hwnd: HWND(0),
-            preview_item_id: 0,
         };
         PANEL_STATE = Some(state);
         Ok(hwnd)
@@ -240,7 +238,6 @@ unsafe fn close_preview() {
             DestroyWindow(state.preview_hwnd);
             state.preview_hwnd = HWND(0);
         }
-        state.preview_item_id = 0;
     }
 }
 
@@ -321,7 +318,6 @@ unsafe fn show_preview(record_id: i64) {
     // 保存句柄
     if let Some(ref mut state) = PANEL_STATE {
         state.preview_hwnd = preview_hwnd;
-        state.preview_item_id = record_id;
     }
 }
 
@@ -435,63 +431,32 @@ unsafe fn toggle_check_selected() {
     refresh_list();
 }
 
-/// 列表框子类化窗口过程 -- 拦截 Escape/Space 键 + 鼠标悬停预览
+/// 列表框子类化窗口过程 -- 拦截 Escape 键和 Space 键（删除模式下切换勾选）
 unsafe extern "system" fn list_box_proc(
     hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM,
 ) -> LRESULT {
-    match msg {
-        WM_KEYDOWN => {
-            let vk = (w as u32 & 0xFFFF) as u16;
-            match vk {
-                VK_ESCAPE => {
-                    if let Some(ref state) = PANEL_STATE {
-                        hide_panel(state.hwnd);
-                    }
-                    return 0;
-                }
-                VK_SPACE => {
-                    if let Some(ref state) = PANEL_STATE {
-                        if state.delete_mode {
-                            toggle_check_selected();
-                            return 0;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        WM_MOUSEMOVE => {
-            // 首次进入列表区域时，注册 HOVER / LEAVE 跟踪
-            let mut tme = TRACKMOUSEEVENT {
-                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                dwFlags: TME_HOVER | TME_LEAVE,
-                hwndTrack: hwnd,
-                dwHoverTime: HOVER_DEFAULT, // 系统鼠标悬停时间（约 400ms）
-            };
-            TrackMouseEvent(&mut tme);
-        }
-        WM_MOUSEHOVER => {
-            // lParam 中的坐标是客户端坐标，直接传给 LB_ITEMFROMPOINT
-            let idx = SendMessageW(hwnd, LB_ITEMFROMPOINT, wparam(0), l) & 0xFFFF;
-            if (idx as u32) < 0xFFFF && idx >= 0 {
-                let item_id = SendMessageW(hwnd, LB_GETITEMDATA, wparam(idx as u32), lparam(0)) as i64;
+    if msg == WM_KEYDOWN {
+        let vk = (w as u32 & 0xFFFF) as u16;
+        match vk {
+            VK_ESCAPE => {
                 if let Some(ref state) = PANEL_STATE {
-                    if state.preview_item_id != item_id {
-                        // 鼠标移到新项上，刷新预览
-                        show_preview(item_id);
+                    hide_panel(state.hwnd);
+                }
+                return 0;
+            }
+            VK_SPACE => {
+                // 删除模式下按空格切换勾选
+                if let Some(ref state) = PANEL_STATE {
+                    if state.delete_mode {
+                        toggle_check_selected();
+                        return 0;
                     }
                 }
-            } else {
-                close_preview();
             }
-            return 0;
+            _ => {}
         }
-        WM_MOUSELEAVE => {
-            close_preview();
-            return 0;
-        }
-        _ => {}
     }
+    // 其余消息走默认列表框处理
     let orig = PANEL_STATE.as_ref().map(|s| s.list_orig_proc).unwrap_or(0);
     if orig == 0 {
         DefWindowProcW(hwnd, msg, w, l)
@@ -538,6 +503,7 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                                 } else {
                                     drop(app);
                                     writeback_only(item_id as i64);
+                                    show_preview(item_id as i64);
                                 }
                             }
                         }

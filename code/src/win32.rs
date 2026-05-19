@@ -289,7 +289,6 @@ pub const LB_GETTEXTLEN: u32 = 0x018A;
 pub const LB_GETCOUNT: u32 = 0x018B;
 pub const LB_GETITEMDATA: u32 = 0x0199;
 pub const LB_SETITEMDATA: u32 = 0x019A;
-pub const LB_ITEMFROMPOINT: u32 = 0x01A9;
 
 // ListBox 通知
 pub const LBN_SELCHANGE: u32 = 1;
@@ -400,22 +399,6 @@ pub const MONITORINFOF_PRIMARY: u32 = 1;
 // GDI 对象
 pub const OBJ_BRUSH: u32 = 2;
 
-// ─── TrackMouseEvent ───
-pub const WM_MOUSEHOVER: u32 = 0x02A1;
-pub const WM_MOUSELEAVE: u32 = 0x02A3;
-pub const TME_HOVER: u32 = 0x00000001;
-pub const TME_LEAVE: u32 = 0x00000002;
-pub const HOVER_DEFAULT: u32 = 0xFFFFFFFF;
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct TRACKMOUSEEVENT {
-    pub cbSize: u32,
-    pub dwFlags: u32,
-    pub hwndTrack: HWND,
-    pub dwHoverTime: u32,
-}
-
 // ─── 辅助函数 ───
 pub fn wparam(v: u32) -> WPARAM { v as WPARAM }
 pub fn lparam(v: isize) -> LPARAM { v as LPARAM }
@@ -487,7 +470,6 @@ extern "system" {
     pub fn UnregisterHotKey(hwnd: HWND, id: i32) -> BOOL;
     pub fn SendInput(cInputs: u32, pInputs: *const INPUT, cbSize: i32) -> u32;
     pub fn keybd_event(bVk: u8, bScan: u8, dwFlags: u32, dwExtraInfo: usize);
-    pub fn TrackMouseEvent(lpEventTrack: *mut TRACKMOUSEEVENT) -> BOOL;
 }
 
 #[link(name = "gdi32")]
