@@ -438,8 +438,6 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                             }
                         }
                         std::thread::sleep(std::time::Duration::from_millis(20));
-                        let dbg_msg = format!("dblclk: id={}, sel={}\n", item_id, sel);
-                        let _ = std::fs::write("C:\\Users\\lenovo\\Desktop\\paste_debug.txt", dbg_msg);
                         do_paste(item_id as i64);
                     }
                     0
