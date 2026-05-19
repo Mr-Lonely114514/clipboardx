@@ -11,7 +11,6 @@ use crate::storage::repository::Repository;
 pub struct PanelState {
     pub hwnd: HWND,
     pub list_hwnd: HWND,
-    pub search_hwnd: HWND,
     pub btn_delete: HWND,
     pub btn_confirm: HWND,
     pub app_state: Arc<Mutex<AppState>>,
@@ -23,7 +22,6 @@ pub struct PanelState {
 
 static mut PANEL_STATE: Option<PanelState> = None;
 
-const ID_SEARCH_BOX: u32 = 1001;
 const ID_LIST_BOX: u32 = 1002;
 const ID_BTN_DELETE: u32 = 1003;
 const ID_BTN_CONFIRM: u32 = 1004;
@@ -80,42 +78,23 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
 
         SetLayeredWindowAttributes(hwnd, 0, 240, LWA_ALPHA);
 
-        // 搜索框
-        let edit_class = w("EDIT");
-        let search_hwnd = CreateWindowExW(
-            WS_EX_CLIENTEDGE,
-            edit_class.as_ptr(),
-            std::ptr::null(),
-            WS_CHILD | WS_VISIBLE | ES_LEFT | ES_AUTOHSCROLL,
-            8, 6, 404, 28,
-            hwnd, HMENU(ID_SEARCH_BOX as isize), hinst, std::ptr::null(),
-        );
-
-        let font_name = w("Microsoft YaHei UI");
-        let hfont = CreateFontW(
-            -14, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_name.as_ptr(),
-        );
-        SendMessageW(search_hwnd, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
-
-        // 列表框
+        // 列表框（从顶部开始）
         let list_class = w("LISTBOX");
         let list_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
             list_class.as_ptr(),
             std::ptr::null(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-            0, 40, 420, 410,
+            0, 6, 420, 444,
             hwnd, HMENU(ID_LIST_BOX as isize), hinst, std::ptr::null(),
         );
 
-        let hfont_list = CreateFontW(
-            -13, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0,
+        let hfont = CreateFontW(
+            -14, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, font_name.as_ptr(),
+            DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, w("Microsoft YaHei UI").as_ptr(),
         );
-        SendMessageW(list_hwnd, WM_SETFONT, wparam(hfont_list.0 as u32), lparam(0));
+        SendMessageW(list_hwnd, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
 
         // "删除" 按钮
         let btn_class = w("BUTTON");
@@ -143,7 +122,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         // 子类化列表框：拦截键盘消息
         let orig_proc = SetWindowLongPtrW(list_hwnd, GWLP_WNDPROC, list_box_proc as isize);
         let state = PanelState {
-            hwnd, list_hwnd, search_hwnd,
+            hwnd, list_hwnd,
             btn_delete, btn_confirm,
             app_state, prev_foreground: HWND(0),
             delete_mode: false, checked_ids: HashSet::new(),
@@ -177,7 +156,7 @@ pub fn show_panel(hwnd: HWND) {
         let y = pt.y + 10;
         SetWindowPos(hwnd, HWND_TOPMOST, x, y, 420, 500, SWP_SHOWWINDOW | SWP_NOACTIVATE);
         if let Some(ref state) = PANEL_STATE {
-            SetFocus(state.search_hwnd);
+            SetFocus(state.list_hwnd);
         }
     }
 }
@@ -452,18 +431,6 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                         }
                         std::thread::sleep(std::time::Duration::from_millis(20));
                         do_paste(item_id as i64);
-                    }
-                    0
-                }
-                ID_SEARCH_BOX if code == EN_CHANGE => {
-                    if let Some(ref state) = PANEL_STATE {
-                        let mut buf = [0u16; 256];
-                        let len = GetWindowTextW(state.search_hwnd, buf.as_mut_ptr(), 256);
-                        let keyword = String::from_utf16_lossy(&buf[..len as usize]);
-                        if let Ok(mut app) = state.app_state.lock() {
-                            app.search_keyword = keyword.trim().to_string();
-                        }
-                        refresh_list();
                     }
                     0
                 }
