@@ -27,6 +27,13 @@ fn w(s: &str) -> Vec<u16> {
 }
 
 fn main() {
+    // 设置 panic hook 用于调试
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("PANIC: {}", info);
+        log::error!("{}", msg);
+        let _ = std::fs::write("C:\\Users\\lenovo\\Desktop\\pasteboard\\panic_info.txt", &msg);
+    }));
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis().init();
     log::info!("ClipBoardX 启动...");

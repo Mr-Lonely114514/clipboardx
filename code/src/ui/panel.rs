@@ -232,7 +232,16 @@ fn format_preview(record: &crate::storage::models::ClipRecord) -> String {
 
 fn truncate(s: &str, max: usize) -> String {
     let line = s.lines().next().unwrap_or(s);
-    if line.len() > max { format!("{}...", &line[..max]) } else { line.to_string() }
+    if line.len() > max {
+        let mut end = max;
+        while end > 0 && !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == 0 { return "...".to_string(); }
+        format!("{}...", &line[..end])
+    } else {
+        line.to_string()
+    }
 }
 
 unsafe fn simulate_ctrl_v() {
@@ -372,7 +381,11 @@ unsafe extern "system" fn list_box_proc(
     }
     // 其余消息走默认列表框处理
     let orig = PANEL_STATE.as_ref().map(|s| s.list_orig_proc).unwrap_or(0);
-    CallWindowProcW(orig, hwnd, msg, w, l)
+    if orig == 0 {
+        DefWindowProcW(hwnd, msg, w, l)
+    } else {
+        CallWindowProcW(orig, hwnd, msg, w, l)
+    }
 }
 
 unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
