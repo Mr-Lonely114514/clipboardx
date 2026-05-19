@@ -129,12 +129,12 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         );
         SendMessageW(btn_delete, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
 
-        // "确认删除" 按钮
+        // "确认删除" 按钮（初始隐藏，进入删除模式后显示）
         let btn_confirm = CreateWindowExW(
             0,
             btn_class.as_ptr(),
             w("确认删除").as_ptr(),
-            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            WS_CHILD | BS_PUSHBUTTON,
             220, 456, 130, 28,
             hwnd, HMENU(ID_BTN_CONFIRM as isize), hinst, std::ptr::null(),
         );
@@ -177,7 +177,7 @@ pub fn show_panel(hwnd: HWND) {
         let y = pt.y + 10;
         SetWindowPos(hwnd, HWND_TOPMOST, x, y, 420, 500, SWP_SHOWWINDOW | SWP_NOACTIVATE);
         if let Some(ref state) = PANEL_STATE {
-            SetFocus(state.list_hwnd);
+            SetFocus(state.search_hwnd);
         }
     }
 }
