@@ -44,10 +44,10 @@ impl Database {
              CREATE INDEX IF NOT EXISTS idx_clip_records_is_favorite ON clip_records(is_favorite);"
         )?;
 
-        // FTS5 全文搜索虚拟表
+        // FTS5 全文搜索虚拟表（只索引 content_text，不索引 source_app）
         self.conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS clip_records_fts USING fts5(
-                content_text, source_app,
+                content_text,
                 content='clip_records',
                 content_rowid='id'
             );"
@@ -56,26 +56,26 @@ impl Database {
         // 自动同步 FTS 的触发器（插入时）
         self.conn.execute_batch(
             "CREATE TRIGGER IF NOT EXISTS clip_records_ai AFTER INSERT ON clip_records BEGIN
-                INSERT INTO clip_records_fts(rowid, content_text, source_app)
-                VALUES (new.id, new.content_text, new.source_app);
+                INSERT INTO clip_records_fts(rowid, content_text)
+                VALUES (new.id, new.content_text);
             END;"
         )?;
 
         // 自动同步 FTS 的触发器（删除时）
         self.conn.execute_batch(
             "CREATE TRIGGER IF NOT EXISTS clip_records_ad AFTER DELETE ON clip_records BEGIN
-                INSERT INTO clip_records_fts(clip_records_fts, rowid, content_text, source_app)
-                VALUES ('delete', old.id, old.content_text, old.source_app);
+                INSERT INTO clip_records_fts(clip_records_fts, rowid, content_text)
+                VALUES ('delete', old.id, old.content_text);
             END;"
         )?;
 
         // 自动同步 FTS 的触发器（更新时）
         self.conn.execute_batch(
             "CREATE TRIGGER IF NOT EXISTS clip_records_au AFTER UPDATE ON clip_records BEGIN
-                INSERT INTO clip_records_fts(clip_records_fts, rowid, content_text, source_app)
-                VALUES ('delete', old.id, old.content_text, old.source_app);
-                INSERT INTO clip_records_fts(rowid, content_text, source_app)
-                VALUES (new.id, new.content_text, new.source_app);
+                INSERT INTO clip_records_fts(clip_records_fts, rowid, content_text)
+                VALUES ('delete', old.id, old.content_text);
+                INSERT INTO clip_records_fts(rowid, content_text)
+                VALUES (new.id, new.content_text);
             END;"
         )?;
 

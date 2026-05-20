@@ -803,8 +803,11 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             // Draw ">" button
             let mut btn_rc = dis.rcItem;
             btn_rc.left = btn_rc.right - 24;
-            // Draw a faint border for the button area
-            SetTextColor(hdc, 0x00FF0000); // blue for "
+            if (dis.itemState & ODS_SELECTED) != 0 {
+                SetTextColor(hdc, 0x00AAAAAA); // gray when selected
+            } else {
+                SetTextColor(hdc, 0x00000000); // black otherwise
+            }
             let btn_txt = [0x003Eu16, 0u16]; // ">" + null
             DrawTextW(hdc, btn_txt.as_ptr(), 1, &mut btn_rc, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
             

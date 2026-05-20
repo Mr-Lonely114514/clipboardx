@@ -127,7 +127,7 @@ impl<'a> Repository<'a> {
             format!("WHERE {}", conditions.join(" AND "))
         };
 
-        // 注意：FTS5 搜索结果无 BLOB（content_blob 为 NULL）
+        // 注意：搜索结果无 BLOB（content_blob 为 NULL）
         let sql = format!(
             "SELECT id, content_hash, content_type, content_text, NULL, \
              source_app, source, is_favorite, created_at, updated_at \
