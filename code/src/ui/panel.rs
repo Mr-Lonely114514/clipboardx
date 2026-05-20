@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashSet;
 
 use crate::app::AppState;
+use crate::utils::config::InteractionMode;
 use crate::win32::*;
 use crate::clipboard::recorder::ClipboardRecorder;
 use crate::storage::repository::Repository;
@@ -44,6 +45,23 @@ fn w(s: &str) -> Vec<u16> {
 
 pub fn get_panel_state() -> Option<&'static PanelState> {
     unsafe { PANEL_STATE.as_ref() }
+}
+
+/// 更新面板标题栏，显示当前交互模式
+pub fn update_title() {
+    unsafe {
+        if let Some(ref state) = PANEL_STATE {
+            if let Ok(app) = state.app_state.lock() {
+                let mode_label = match app.config.interaction_mode {
+                    InteractionMode::AutoPaste => "自动粘贴",
+                    InteractionMode::ConfirmThenPaste => "确认后粘贴",
+                };
+                let title = format!("ClipBoardX - {}", mode_label);
+                let wide = w(&title);
+                SetWindowTextW(state.hwnd, wide.as_ptr());
+            }
+        }
+    }
 }
 
 pub fn register_panel_class(hinst: HINSTANCE) -> Result<(), String> {
@@ -205,6 +223,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             in_dialog: false,
         };
         PANEL_STATE = Some(state);
+        update_title();
         Ok(hwnd)
     }
 }

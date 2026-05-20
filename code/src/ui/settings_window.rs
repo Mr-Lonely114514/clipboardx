@@ -172,7 +172,10 @@ unsafe extern "system" fn settings_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: 
 
                             if let Err(e) = new_config.save() {
                                 log::error!("保存配置失败: {}", e);
-                            } else { app.config = new_config; }
+                            } else {
+                                app.config = new_config;
+                                crate::ui::panel::update_title();
+                            }
                         }
                     }
                     DestroyWindow(hwnd); 0
