@@ -5,6 +5,7 @@ use crate::app::AppState;
 use crate::win32::*;
 use crate::clipboard::recorder::ClipboardRecorder;
 use crate::storage::repository::Repository;
+use crate::ui::settings_window;
 
 /// 面板状态
 pub struct PanelState {
@@ -12,14 +13,15 @@ pub struct PanelState {
     pub list_hwnd: HWND,
     pub btn_delete: HWND,
     pub btn_confirm: HWND,
-    pub btn_exit: HWND,
+    pub btn_settings: HWND,
     pub app_state: Arc<Mutex<AppState>>,
     pub prev_foreground: HWND,
     pub delete_mode: bool,
     pub checked_ids: HashSet<i64>,
     pub list_orig_proc: isize,
     pub preview_hwnd: HWND,
-    pub preview_orig_proc: isize,
+    pub preview_edit_hwnd: HWND,
+    pub preview_edit_orig_proc: isize,
     pub preview_opening: bool, // CreateWindowExW 期间预防 WM_ACTIVATE 误判
 }
 
@@ -28,7 +30,7 @@ static mut PANEL_STATE: Option<PanelState> = None;
 const ID_LIST_BOX: u32 = 1002;
 const ID_BTN_DELETE: u32 = 1003;
 const ID_BTN_CONFIRM: u32 = 1004;
-const ID_BTN_EXIT: u32 = 1005;
+const ID_BTN_SETTINGS: u32 = 1005;
 fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -55,6 +57,24 @@ pub fn register_panel_class(hinst: HINSTANCE) -> Result<(), String> {
         if RegisterClassW(&wc as *const WNDCLASSW) == 0 {
             return Err("注册面板窗口类失败".to_string());
         }
+
+        // 注册预览弹出窗口类
+        let preview_class_name = w("ClipBoardX_Preview");
+        let wc_preview = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(preview_wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinst,
+            hIcon: HICON(0),
+            hCursor: LoadCursorW(HINSTANCE(0), IDC_ARROW),
+            hbrBackground: HBRUSH(GetStockObject(WHITE_BRUSH as i32)),
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: preview_class_name.as_ptr(),
+        };
+        if RegisterClassW(&wc_preview as *const WNDCLASSW) == 0 {
+            return Err("注册预览窗口类失败".to_string());
+        }
     }
     Ok(())
 }
@@ -68,7 +88,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TOPMOST,
             class_name.as_ptr(),
             title.as_ptr(),
-            WS_POPUP,
+            WS_POPUP | WS_CAPTION | WS_SYSMENU,
             0, 0, 420, 1,
             HWND(0),
             HMENU(0),
@@ -88,7 +108,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             list_class.as_ptr(),
             std::ptr::null(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
-            0, 6, 420, 444,
+            0, 0, 420, 450,
             hwnd, HMENU(ID_LIST_BOX as isize), hinst, std::ptr::null(),
         );
 
@@ -111,16 +131,16 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         );
         SendMessageW(btn_delete, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
 
-        // "退出" 按钮（删除按钮右侧）
-        let btn_exit = CreateWindowExW(
+        // "设置" 按钮（删除按钮右侧）
+        let btn_settings = CreateWindowExW(
             0,
             btn_class.as_ptr(),
-            w("退出").as_ptr(),
+            w("设置").as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             230, 456, 130, 28,
-            hwnd, HMENU(ID_BTN_EXIT as isize), hinst, std::ptr::null(),
+            hwnd, HMENU(ID_BTN_SETTINGS as isize), hinst, std::ptr::null(),
         );
-        SendMessageW(btn_exit, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
+        SendMessageW(btn_settings, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
 
         // "确认删除" 按钮（初始隐藏，进入删除模式后显示）
         let btn_confirm = CreateWindowExW(
@@ -137,12 +157,13 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         let orig_proc = SetWindowLongPtrW(list_hwnd, GWLP_WNDPROC, list_box_proc as isize);
         let state = PanelState {
             hwnd, list_hwnd,
-            btn_delete, btn_confirm, btn_exit,
+            btn_delete, btn_confirm, btn_settings,
             app_state, prev_foreground: HWND(0),
             delete_mode: false, checked_ids: HashSet::new(),
             list_orig_proc: orig_proc,
             preview_hwnd: HWND(0),
-            preview_orig_proc: 0,
+            preview_edit_hwnd: HWND(0),
+            preview_edit_orig_proc: 0,
             preview_opening: false,
         };
         PANEL_STATE = Some(state);
@@ -160,7 +181,7 @@ pub fn show_panel(hwnd: HWND) {
             state.checked_ids.clear();
             SetWindowTextW(state.btn_delete, w("删除").as_ptr());
             ShowWindow(state.btn_confirm, SW_HIDE);
-            ShowWindow(state.btn_exit, SW_SHOW);
+            ShowWindow(state.btn_settings, SW_SHOW);
         }
         // 记录打开面板前的前景窗口
         let fg = GetForegroundWindow();
@@ -184,7 +205,7 @@ pub fn show_panel(hwnd: HWND) {
         GetMonitorInfoW(monitor, &mut mi);
 
         let panel_w = 420;
-        let panel_h = 500;
+        let panel_h = 530; // 给 WS_CAPTION 标题栏留出空间（~30px）
 
         // X：水平居中于鼠标，并钳制在工作区内
         let mut x = pt.x - panel_w / 2;
@@ -279,26 +300,59 @@ fn truncate(s: &str, max: usize) -> String {
 /// 预览内容显示的最大字符数
 const MAX_PREVIEW_CHARS: usize = 8000;
 
-/// 预览窗口过程：处理 Escape 和 X 按钮关闭
+/// 预览弹出窗口的窗口过程（处理关闭、缩放、Escape）
 unsafe extern "system" fn preview_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
         WM_CLOSE => {
-            // X 按钮点击
-            if let Some(ref mut state) = PANEL_STATE {
-                if state.preview_hwnd == hwnd {
-                    DestroyWindow(hwnd);
-                    state.preview_hwnd = HWND(0);
-                }
-            }
+            DestroyWindow(hwnd);
             return 0;
         }
         WM_KEYDOWN => {
             let vk = (w as u32 & 0xFFFF) as u16;
             if vk == VK_ESCAPE {
+                DestroyWindow(hwnd);
+                return 0;
+            }
+        }
+        WM_SIZE => {
+            // 调整内部 EDIT 子控件填满客户区
+            if let Some(ref state) = PANEL_STATE {
+                if state.preview_hwnd == hwnd {
+                    let edit_hwnd = state.preview_edit_hwnd;
+                    if edit_hwnd.0 != 0 {
+                        let width = LOWORD(l as u32) as i32;
+                        let height = HIWORD(l as u32) as i32;
+                        SetWindowPos(edit_hwnd, HWND_TOP, 0, 0, width, height, SWP_SHOWWINDOW);
+                    }
+                }
+            }
+        }
+        WM_DESTROY => {
+            // 清除状态
+            if let Some(ref mut state) = PANEL_STATE {
+                if state.preview_hwnd == hwnd {
+                    state.preview_hwnd = HWND(0);
+                    state.preview_edit_hwnd = HWND(0);
+                    state.preview_edit_orig_proc = 0;
+                }
+            }
+            return 0;
+        }
+        _ => {}
+    }
+    DefWindowProcW(hwnd, msg, w, l)
+}
+
+/// EDIT 子控件的子类过程（仅拦截 Escape 关闭预览窗口）
+unsafe extern "system" fn preview_edit_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    match msg {
+        WM_KEYDOWN => {
+            let vk = (w as u32 & 0xFFFF) as u16;
+            if vk == VK_ESCAPE {
+                // 获取父级预览弹出窗口并销毁它
                 if let Some(ref mut state) = PANEL_STATE {
-                    if state.preview_hwnd == hwnd {
-                        DestroyWindow(hwnd);
-                        state.preview_hwnd = HWND(0);
+                    if state.preview_edit_hwnd == hwnd {
+                        DestroyWindow(state.preview_hwnd);
                     }
                 }
                 return 0;
@@ -306,7 +360,8 @@ unsafe extern "system" fn preview_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: L
         }
         _ => {}
     }
-    let orig = PANEL_STATE.as_ref().map(|s| s.preview_orig_proc).unwrap_or(0);
+    // 其余消息（包含 WM_DESTROY）交给原始 EDIT 过程
+    let orig = PANEL_STATE.as_ref().map(|s| s.preview_edit_orig_proc).unwrap_or(0);
     if orig != 0 {
         CallWindowProcW(orig, hwnd, msg, w, l)
     } else {
@@ -331,14 +386,17 @@ unsafe fn show_preview(record_id: i64) {
 
     let state = match PANEL_STATE.as_ref() { Some(s) => s, None => return };
 
-    // 从数据库获取记录全文
-    let content = if let Ok(app) = state.app_state.lock() {
+    // 从数据库获取记录全文 + 时间
+    let (content, created_at) = if let Ok(app) = state.app_state.lock() {
         let repo = Repository::new(&app.db);
         match repo.find_by_id(record_id) {
-            Ok(Some(record)) => match record.content_type.as_str() {
-                "image" => "[图片]".to_string(),
-                _ => record.content_text.unwrap_or_else(|| "[空]".to_string()),
-            },
+            Ok(Some(record)) => {
+                let text = match record.content_type.as_str() {
+                    "image" => "[图片]".to_string(),
+                    _ => record.content_text.unwrap_or_else(|| "[空]".to_string()),
+                };
+                (text, record.created_at)
+            }
             _ => return,
         }
     } else { return };
@@ -351,8 +409,6 @@ unsafe fn show_preview(record_id: i64) {
         content
     };
 
-    let wide = w(&display);
-
     // 获取面板位置
     let mut panel_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetWindowRect(state.hwnd, &mut panel_rect);
@@ -360,17 +416,17 @@ unsafe fn show_preview(record_id: i64) {
     // 从列表框获取字体
     let hfont = SendMessageW(state.list_hwnd, WM_GETFONT, wparam(0), lparam(0));
 
-    // 创建弹出 Edit 控件（只读、多行、可垂直滚动）
     // 先标记，防止 CreateWindowExW 触发的 WM_ACTIVATE 误判
     if let Some(ref mut s) = PANEL_STATE {
         s.preview_opening = true;
     }
+
+    // 1. 创建预览弹出窗口（带标题栏、关闭按钮、可调整大小）
     let preview_hwnd = CreateWindowExW(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-        w("EDIT").as_ptr(),
-        wide.as_ptr(),
-        WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_VSCROLL | WS_SIZEBOX
-            | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_NOHIDESEL,
+        WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        w("ClipBoardX_Preview").as_ptr(),
+        w("").as_ptr(), // 标题在 SetWindowTextW 时设置
+        WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_SIZEBOX,
         0, 0, 600, 400,
         HWND(0),
         HMENU(0),
@@ -382,15 +438,42 @@ unsafe fn show_preview(record_id: i64) {
     }
     if preview_hwnd.0 == 0 { return; }
 
-    // 设置字体
+    // 设置窗口标题为时间
+    let title_str = format!("{}", created_at.format("%Y-%m-%d %H:%M"));
+    let title_wide = w(&title_str);
+    SetWindowTextW(preview_hwnd, title_wide.as_ptr());
+
+    // 2. 创建 EDIT 子控件（只读、多行、可垂直滚动）
+    let edit_hwnd = CreateWindowExW(
+        WS_EX_CLIENTEDGE,
+        w("EDIT").as_ptr(),
+        std::ptr::null(),
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_NOHIDESEL | ES_DISABLENOSCROLL,
+        0, 0, 600, 400,
+        preview_hwnd,
+        HMENU(0),
+        GetModuleHandleW(std::ptr::null()),
+        std::ptr::null(),
+    );
+    if edit_hwnd.0 == 0 { DestroyWindow(preview_hwnd); return; }
+
+    // 3. 设置字体
     if hfont != 0 {
-        SendMessageW(preview_hwnd, WM_SETFONT, wparam(hfont as u32), lparam(0));
+        SendMessageW(edit_hwnd, WM_SETFONT, wparam(hfont as u32), lparam(0));
     }
 
-    // 子类化编辑控件，处理 Escape 关闭
-    let orig_edit = SetWindowLongPtrW(preview_hwnd, GWLP_WNDPROC, preview_wnd_proc as isize);
+    // 4. 设置文本内容（创建后设置，确保换行计算正确）
+    let wide = w(&display);
+    SetWindowTextW(edit_hwnd, wide.as_ptr());
+
+    // 5. 让编辑控件重新计算排版（换行），确保 WS_VSCROLL 滚动条正确显示
+    SendMessageW(edit_hwnd, EM_SETTARGETDEVICE, wparam(0), lparam(0));
+
+    // 6. 子类化 EDIT 控件，仅处理 Escape 关闭
+    let orig_edit = SetWindowLongPtrW(edit_hwnd, GWLP_WNDPROC, preview_edit_proc as isize);
     if let Some(ref mut state) = PANEL_STATE {
-        state.preview_orig_proc = orig_edit;
+        state.preview_edit_hwnd = edit_hwnd;
+        state.preview_edit_orig_proc = orig_edit;
     }
 
     // 定位：面板右侧，若超出屏幕则放在左侧
@@ -474,9 +557,9 @@ unsafe fn toggle_delete_mode() {
             state.checked_ids.clear();
         }
         SetWindowTextW(state.btn_delete, w(if state.delete_mode { "取消" } else { "删除" }).as_ptr());
-        // 隐藏/显示"确认删除"和"退出"按钮（互斥，避免重叠抢点击）
+        // 隐藏/显示"确认删除"和"设置"按钮（互斥，避免重叠抢点击）
         ShowWindow(state.btn_confirm, if state.delete_mode { SW_SHOW } else { SW_HIDE });
-        ShowWindow(state.btn_exit, if state.delete_mode { SW_HIDE } else { SW_SHOW });
+        ShowWindow(state.btn_settings, if state.delete_mode { SW_HIDE } else { SW_SHOW });
     }
     refresh_list();
 }
@@ -503,7 +586,7 @@ unsafe fn confirm_delete() {
         state.delete_mode = false;
         SetWindowTextW(state.btn_delete, w("删除").as_ptr());
         ShowWindow(state.btn_confirm, SW_HIDE);
-        ShowWindow(state.btn_exit, SW_SHOW);
+        ShowWindow(state.btn_settings, SW_SHOW);
     }
     refresh_list();
 }
@@ -660,8 +743,11 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                     confirm_delete();
                     0
                 }
-                ID_BTN_EXIT if code == BN_CLICKED => {
-                    hide_panel(hwnd);
+                ID_BTN_SETTINGS if code == BN_CLICKED => {
+                    if let Some(ref state) = PANEL_STATE {
+                        let hinst = GetModuleHandleW(std::ptr::null());
+                        let _ = settings_window::create_settings_window(hinst, state.hwnd, state.app_state.clone());
+                    }
                     0
                 }
                 ID_LIST_BOX if code == LBN_SELCHANGE => {

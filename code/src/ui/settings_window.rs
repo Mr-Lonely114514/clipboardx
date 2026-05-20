@@ -54,7 +54,7 @@ pub fn create_settings_window(
         let hwnd = CreateWindowExW(
             WS_EX_DLGMODALFRAME, class_name.as_ptr(), title.as_ptr(),
             WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-            0, 0, 380, 300, parent, HMENU(0), hinst, std::ptr::null(),
+            0, 0, 380, 350, parent, HMENU(0), hinst, std::ptr::null(),
         );
         if hwnd.0 == 0 { return Err("创建设置窗口失败".to_string()); }
 
@@ -99,22 +99,30 @@ pub fn create_settings_window(
         let mode_idx = if matches!(config.interaction_mode, InteractionMode::ConfirmThenPaste) { 1 } else { 0 };
         SendMessageW(combo_hwnd, CB_SETCURSEL, wparam(mode_idx), lparam(0));
 
+        // 交互模式说明
+        let desc1 = w("自动粘贴：单击后自动粘贴并关闭面板");
+        let desc2 = w("确认后粘贴：仅写入剪切板，双击/回车确认后粘贴");
+        CreateWindowExW(WS_EX_TRANSPARENT, static_class.as_ptr(), desc1.as_ptr(),
+            WS_CHILD | WS_VISIBLE, 20, 72, 340, 18, hwnd, HMENU(0), hinst, std::ptr::null());
+        CreateWindowExW(WS_EX_TRANSPARENT, static_class.as_ptr(), desc2.as_ptr(),
+            WS_CHILD | WS_VISIBLE, 20, 90, 340, 18, hwnd, HMENU(0), hinst, std::ptr::null());
+
         // 最大条数
         let label3 = w("最大条数：");
         CreateWindowExW(WS_EX_TRANSPARENT, static_class.as_ptr(), label3.as_ptr(),
-            WS_CHILD | WS_VISIBLE | SS_RIGHT, 20, 75, 100, 20, hwnd, HMENU(0), hinst, std::ptr::null());
+            WS_CHILD | WS_VISIBLE | SS_RIGHT, 20, 120, 100, 20, hwnd, HMENU(0), hinst, std::ptr::null());
 
         let max_str = if config.max_records == -1 { "无限制".to_string() } else { config.max_records.to_string() };
         let max_wide = w(&max_str);
         CreateWindowExW(WS_EX_STATICEDGE, edit_class.as_ptr(), max_wide.as_ptr(),
-            WS_CHILD | WS_VISIBLE | ES_LEFT, 120, 75, 200, 22, hwnd, HMENU(ID_MAX_RECORDS_EDIT as isize), hinst, std::ptr::null());
+            WS_CHILD | WS_VISIBLE | ES_LEFT, 120, 120, 200, 22, hwnd, HMENU(ID_MAX_RECORDS_EDIT as isize), hinst, std::ptr::null());
 
         // 图片存储
         let button_class = w("BUTTON");
         let chk_txt = w("启用图片存储");
         let chk_hwnd = CreateWindowExW(WS_EX_TRANSPARENT, button_class.as_ptr(), chk_txt.as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            120, 105, 200, 22, hwnd, HMENU(ID_IMAGE_STORAGE_CHK as isize), hinst, std::ptr::null());
+            120, 150, 200, 22, hwnd, HMENU(ID_IMAGE_STORAGE_CHK as isize), hinst, std::ptr::null());
         let chk_state = if config.image_storage_enabled { BST_CHECKED } else { BST_UNCHECKED };
         SendMessageW(chk_hwnd, BM_SETCHECK, wparam(chk_state), lparam(0));
 
@@ -122,12 +130,12 @@ pub fn create_settings_window(
         let save_txt = w("保存");
         CreateWindowExW(WS_EX_TRANSPARENT, button_class.as_ptr(), save_txt.as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_DEFPUSHBUTTON,
-            180, 220, 80, 28, hwnd, HMENU(ID_SAVE_BTN as isize), hinst, std::ptr::null());
+            180, 260, 80, 28, hwnd, HMENU(ID_SAVE_BTN as isize), hinst, std::ptr::null());
 
         let cancel_txt = w("取消");
         CreateWindowExW(WS_EX_TRANSPARENT, button_class.as_ptr(), cancel_txt.as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            270, 220, 80, 28, hwnd, HMENU(ID_CANCEL_BTN as isize), hinst, std::ptr::null());
+            270, 260, 80, 28, hwnd, HMENU(ID_CANCEL_BTN as isize), hinst, std::ptr::null());
 
         Ok(hwnd)
     }

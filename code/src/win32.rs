@@ -247,6 +247,7 @@ pub const WM_LBUTTONDOWN: u32 = 0x0201;
 pub const WM_LBUTTONUP: u32 = 0x0202;
 pub const WM_LBUTTONDBLCLK: u32 = 0x0203;
 pub const WM_RBUTTONUP: u32 = 0x0205;
+pub const WM_MOUSEWHEEL: u32 = 0x020A;
 pub const WM_PASTE: u32 = 0x0302;
 pub const WA_INACTIVE: u32 = 0;
 
@@ -302,6 +303,8 @@ pub const ES_NOHIDESEL: u32 = 0x0100;
 pub const ES_READONLY: u32 = 0x0800;
 pub const ES_CENTER: u32 = 0x0001;
 pub const ES_NUMBER: u32 = 0x2000;
+pub const ES_DISABLENOSCROLL: u32 = 0x2000;
+pub const EM_SETTARGETDEVICE: u32 = 0x0448;
 pub const CBS_HASSTRINGS: u32 = 0x0200;
 pub const CB_ADDSTRING: u32 = 0x0143;
 pub const CB_SETCURSEL: u32 = 0x014E;
