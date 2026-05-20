@@ -277,9 +277,12 @@ pub const NIF_ICON: u32 = 0x0002;
 pub const NIF_MESSAGE: u32 = 0x0001;
 pub const NIF_TIP: u32 = 0x0004;
 pub const NIF_SHOWTIP: u32 = 0x0080;
+pub const NIF_INFO: u32 = 0x0010;
 pub const NIM_ADD: u32 = 0;
 pub const NIM_DELETE: u32 = 2;
 pub const NIM_MODIFY: u32 = 1;
+pub const NIIF_WARNING: u32 = 0x0002;
+pub const NIIF_INFO: u32 = 0x0001;
 
 // 菜单
 pub const MF_STRING: u32 = 0x0000;

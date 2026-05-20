@@ -10,6 +10,7 @@ mod ui;
 mod utils;
 mod win32;
 
+use app::StorageWarning;
 use win32::*;
 use hotkey::manager::HotkeyManager;
 
@@ -21,6 +22,11 @@ const MENU_SETTINGS: usize = 1002;
 const MENU_ABOUT: usize = 1003;
 const MENU_EXIT: usize = 1004;
 const MENU_CLEAR: usize = 1005;
+
+/// 全局 APP_STATE，供 handle_clipboard_update 在不打开面板时使用
+static APP_STATE: std::sync::Mutex<Option<Arc<Mutex<app::AppState>>>> = std::sync::Mutex::new(None);
+/// 监听窗口句柄，用于显示托盘气泡
+static MONITOR_HWND: std::sync::Mutex<Option<HWND>> = std::sync::Mutex::new(None);
 
 fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -98,6 +104,10 @@ unsafe fn run_message_loop(app_state: Arc<Mutex<app::AppState>>) {
         log::error!("创建面板失败: {}", e); return;
     }
     log::info!("面板已创建");
+
+    // 存储全局引用，供 handle_clipboard_update 使用
+    *APP_STATE.lock().unwrap() = Some(app_state.clone());
+    *MONITOR_HWND.lock().unwrap() = Some(monitor);
 
     // 消息循环
     let mut msg = MSG::default();
@@ -179,12 +189,85 @@ unsafe extern "system" fn monitor_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: L
 }
 
 unsafe fn handle_clipboard_update() {
-    if let Some(s) = ui::panel::get_panel_state() {
-        if let Ok(app) = s.app_state.lock() {
+    // 1. 通过全局 APP_STATE 获取应用状态（不依赖面板）
+    let app_opt = APP_STATE.lock().unwrap().clone();
+    if let Some(app_arc) = app_opt {
+        // 捕获并保存剪切板内容
+        if let Ok(app) = app_arc.lock() {
             let r = clipboard::recorder::ClipboardRecorder::new(&app.db, &app.skip_marker, &app.config);
             r.capture_and_save();
         }
+
+        // 检查无限制模式下的存储阈值
+        if let Ok(mut app) = app_arc.lock() {
+            if !app.storage_warning_sent {
+                let warnings = app.check_storage_limits();
+                if !warnings.is_empty() {
+                    let msg = format_warning(&warnings);
+                    log::warn!("存储阈值警告: {}", msg);
+                    let hwnd = MONITOR_HWND.lock().unwrap().unwrap_or(HWND(0));
+                    show_tray_balloon(
+                        hwnd,
+                        "ClipBoardX - 存储警告",
+                        &msg,
+                        NIIF_WARNING,
+                    );
+                    app.storage_warning_sent = true;
+                }
+            }
+        }
     }
+
+    // 3. 如果面板已打开，刷新列表以显示新记录
+    if let Some(_) = ui::panel::get_panel_state() {
+        ui::panel::refresh_list();
+    }
+}
+
+/// 将 StorageWarning 列表格式化为用户可读的文本
+fn format_warning(warnings: &[StorageWarning]) -> String {
+    let mut parts = Vec::new();
+    for w in warnings {
+        match w {
+            StorageWarning::RecordCountExceeded { current, limit } => {
+                parts.push(format!("记录数已达 {} 条（超 {} 条）", current, limit));
+            }
+            StorageWarning::FileSizeExceeded { current, limit } => {
+                let mb = current / (1024 * 1024);
+                let limit_mb = limit / (1024 * 1024);
+                parts.push(format!("数据库文件大小已达 {} MB（超 {} MB）", mb, limit_mb));
+            }
+        }
+    }
+    parts.join("\n")
+}
+
+/// 发送托盘气泡通知
+unsafe fn show_tray_balloon(hwnd: HWND, title: &str, msg: &str, icon_type: u32) {
+    let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+    nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = TRAY_ICON_ID;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = icon_type;
+
+    let title_wide = w(title);
+    let mut i = 0;
+    for &ch in &title_wide {
+        if i >= 63 { break; }
+        nid.szInfoTitle[i] = ch; i += 1;
+    }
+    nid.szInfoTitle[i] = 0;
+
+    let msg_wide = w(msg);
+    let mut i = 0;
+    for &ch in &msg_wide {
+        if i >= 255 { break; }
+        nid.szInfo[i] = ch; i += 1;
+    }
+    nid.szInfo[i] = 0;
+
+    Shell_NotifyIconW(NIM_MODIFY, &nid as *const NOTIFYICONDATAW);
 }
 
 unsafe fn handle_hotkey() {

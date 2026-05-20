@@ -26,6 +26,7 @@ pub struct PanelState {
     pub preview_edit_hwnd: HWND,
     pub preview_edit_orig_proc: isize,
     pub preview_opening: bool, // CreateWindowExW 期间预防 WM_ACTIVATE 误判
+    pub in_dialog: bool,       // 正在弹模态对话框，不自动隐藏面板
 }
 
 static mut PANEL_STATE: Option<PanelState> = None;
@@ -201,6 +202,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             preview_edit_hwnd: HWND(0),
             preview_edit_orig_proc: 0,
             preview_opening: false,
+            in_dialog: false,
         };
         PANEL_STATE = Some(state);
         Ok(hwnd)
@@ -305,7 +307,7 @@ pub fn toggle_panel(hwnd: HWND) {
     }
 }
 
-unsafe fn refresh_list() {
+pub unsafe fn refresh_list() {
     let state = match PANEL_STATE.as_mut() { Some(s) => s, None => return };
     SendMessageW(state.list_hwnd, LB_RESETCONTENT, wparam(0), lparam(0));
     if let Ok(mut app) = state.app_state.lock() {
@@ -626,9 +628,11 @@ unsafe fn confirm_delete() {
             return;
         }
         // 显示确认对话框
+        state.in_dialog = true;
         let msg = w(&format!("确定要删除 {} 条记录吗？", state.checked_ids.len()));
         let title = w("确认删除");
         let ret = MessageBoxW(state.hwnd, msg.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONWARNING);
+        state.in_dialog = false;
         if ret != IDYES {
             return;
         }
@@ -954,7 +958,7 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                 // 如果是预览窗口激活（点击预览窗口标题栏等），面板不隐藏
                 let deactivated_hwnd = HWND(l as isize);
                 if let Some(ref state) = PANEL_STATE {
-                    if state.preview_opening || deactivated_hwnd == state.preview_hwnd {
+                    if state.preview_opening || state.in_dialog || deactivated_hwnd == state.preview_hwnd {
                         return DefWindowProcW(hwnd, msg, w, l);
                     }
                 }

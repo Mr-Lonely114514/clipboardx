@@ -27,6 +27,8 @@ pub struct AppState {
     pub pending_paste_id: Option<i64>,
     /// 是否只显示收藏项
     pub favorite_filter: bool,
+    /// 无限制模式下是否已发送过存储警告（避免重复弹窗）
+    pub storage_warning_sent: bool,
 }
 
 impl AppState {
@@ -42,6 +44,7 @@ impl AppState {
             selected_index: -1,
             pending_paste_id: None,
             favorite_filter: false,
+            storage_warning_sent: false,
         })
     }
 
@@ -118,27 +121,35 @@ impl AppState {
         }
     }
 
-    /// 检查无限制模式下的安全阈值（F-10）
+    /// 检查存储阈值，返回超过限制的警告列表
+    /// - max_records == -1: 无限制模式，不做检查
+    /// - max_records > 0: 检查记录数是否超过限制
     pub fn check_storage_limits(&mut self) -> Vec<StorageWarning> {
         let mut warnings = Vec::new();
 
-        if self.config.max_records != -1 {
+        // -1 表示无限制模式，跳过所有检查
+        if self.config.max_records == -1 {
             return warnings;
         }
 
-        // 检查记录数
+        // 检查记录数是否超过 max_records
         let repo = Repository::new(&self.db);
         if let Ok(count) = repo.count() {
-            if count > 100_000 {
-                warnings.push(StorageWarning::RecordCountExceeded(count));
+            if count > self.config.max_records {
+                warnings.push(StorageWarning::RecordCountExceeded {
+                    current: count,
+                    limit: self.config.max_records,
+                });
             }
         }
 
-        // 检查数据库文件大小
+        // 检查数据库文件大小（>1GB 告警）
         if let Ok(size) = self.db.file_size() {
             if size > 1_000_000_000 {
-                // 1 GB
-                warnings.push(StorageWarning::FileSizeExceeded(size));
+                warnings.push(StorageWarning::FileSizeExceeded {
+                    current: size,
+                    limit: 1_000_000_000,
+                });
             }
         }
 
@@ -149,8 +160,8 @@ impl AppState {
 /// 存储警告
 #[derive(Debug, Clone)]
 pub enum StorageWarning {
-    RecordCountExceeded(i64),
-    FileSizeExceeded(u64),
+    RecordCountExceeded { current: i64, limit: i64 },
+    FileSizeExceeded { current: u64, limit: u64 },
 }
 
 /// Repository 的辅助方法
