@@ -15,6 +15,7 @@ pub struct PanelState {
     pub btn_delete: HWND,
     pub btn_confirm: HWND,
     pub btn_settings: HWND,
+    pub btn_fav_filter: HWND,
     pub app_state: Arc<Mutex<AppState>>,
     pub prev_foreground: HWND,
     pub delete_mode: bool,
@@ -34,6 +35,7 @@ const ID_BTN_DELETE: u32 = 1003;
 const ID_BTN_CONFIRM: u32 = 1004;
 const ID_BTN_SETTINGS: u32 = 1005;
 const ID_SEARCH_EDIT: u32 = 1006;
+const ID_BTN_FAV_FILTER: u32 = 1007;
 const EM_SETCUEBANNER: u32 = 0x1501;
 fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -93,7 +95,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             class_name.as_ptr(),
             title.as_ptr(),
             WS_POPUP | WS_CAPTION | WS_SYSMENU,
-            0, 0, 420, 1,
+            0, 0, 460, 1,
             HWND(0),
             HMENU(0),
             hinst,
@@ -118,13 +120,25 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             edit_class.as_ptr(),
             std::ptr::null(),
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_LEFT | ES_AUTOHSCROLL,
-            4, 6, 412, 24,
+            4, 6, 378, 24,
             hwnd, HMENU(ID_SEARCH_EDIT as isize), hinst, std::ptr::null(),
         );
         SendMessageW(search_hwnd, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
         // 提示文字
         let placeholder = w("搜索历史记录…");
         SendMessageW(search_hwnd, EM_SETCUEBANNER, wparam(1), lparam(placeholder.as_ptr() as isize));
+
+        // "收藏"过滤按钮（搜索框右侧）
+        let btn_class = w("BUTTON");
+        let btn_fav_filter = CreateWindowExW(
+            0,
+            btn_class.as_ptr(),
+            w("☆ 收藏").as_ptr(),
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            388, 6, 68, 24,
+            hwnd, HMENU(ID_BTN_FAV_FILTER as isize), hinst, std::ptr::null(),
+        );
+        SendMessageW(btn_fav_filter, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
 
         // 列表框（搜索框下方）
         let list_class = w("LISTBOX");
@@ -133,7 +147,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             list_class.as_ptr(),
             std::ptr::null(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
-            0, 34, 420, 418,
+            0, 34, 460, 418,
             hwnd, HMENU(ID_LIST_BOX as isize), hinst, std::ptr::null(),
         );
         SendMessageW(list_hwnd, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
@@ -145,7 +159,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             btn_class.as_ptr(),
             w("删除").as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            60, 456, 130, 28,
+            80, 456, 130, 28,
             hwnd, HMENU(ID_BTN_DELETE as isize), hinst, std::ptr::null(),
         );
         SendMessageW(btn_delete, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
@@ -156,7 +170,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             btn_class.as_ptr(),
             w("设置").as_ptr(),
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            230, 456, 130, 28,
+            250, 456, 130, 28,
             hwnd, HMENU(ID_BTN_SETTINGS as isize), hinst, std::ptr::null(),
         );
         SendMessageW(btn_settings, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
@@ -167,7 +181,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
             btn_class.as_ptr(),
             w("确认删除").as_ptr(),
             WS_CHILD | BS_PUSHBUTTON,
-            230, 456, 130, 28,
+            250, 456, 130, 28,
             hwnd, HMENU(ID_BTN_CONFIRM as isize), hinst, std::ptr::null(),
         );
         SendMessageW(btn_confirm, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
@@ -178,7 +192,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         let search_orig_proc = SetWindowLongPtrW(search_hwnd, GWLP_WNDPROC, search_edit_proc as isize);
         let state = PanelState {
             hwnd, list_hwnd, search_hwnd,
-            btn_delete, btn_confirm, btn_settings,
+            btn_delete, btn_confirm, btn_settings, btn_fav_filter,
             app_state, prev_foreground: HWND(0),
             delete_mode: false, checked_ids: HashSet::new(),
             list_orig_proc,
@@ -204,13 +218,16 @@ pub fn show_panel(hwnd: HWND) {
             SetWindowTextW(state.btn_delete, w("删除").as_ptr());
             ShowWindow(state.btn_confirm, SW_HIDE);
             ShowWindow(state.btn_settings, SW_SHOW);
+            // 重置收藏过滤（按钮文本 + 状态）
+            SetWindowTextW(state.btn_fav_filter, w("☆ 收藏").as_ptr());
             // 清空搜索框
             SetWindowTextW(state.search_hwnd, std::ptr::null());
         }
-        // 重置搜索关键词
+        // 重置搜索关键词和收藏过滤
         if let Some(ref state) = PANEL_STATE {
             if let Ok(mut app) = state.app_state.lock() {
                 app.search_keyword.clear();
+                app.favorite_filter = false;
             }
         }
         // 记录打开面板前的前景窗口
@@ -234,7 +251,7 @@ pub fn show_panel(hwnd: HWND) {
         };
         GetMonitorInfoW(monitor, &mut mi);
 
-        let panel_w = 420;
+        let panel_w = 460;
         let panel_h = 530; // 给 WS_CAPTION 标题栏留出空间（~30px）
 
         // X：水平居中于鼠标，并钳制在工作区内
@@ -318,8 +335,7 @@ fn format_preview(record: &crate::storage::models::ClipRecord) -> String {
         _ => record.content_text.as_ref().map(|t| truncate(t, max)).unwrap_or_else(|| "[空]".to_string()),
     };
     let time = record.created_at.format("%Y.%m.%d %H:%M").to_string();
-    let fav = if record.is_favorite { " ★" } else { "" };
-    format!("{}{}  {}", preview, fav, time)
+    format!("{}  {}", preview, time)
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -667,17 +683,30 @@ unsafe extern "system" fn list_box_proc(
         let mut rc = RECT::default();
         GetClientRect(hwnd, &mut rc);
         let width = rc.right;
-        // "right 24px = " area
-        if x >= width - 24 && x < width {
-            let lparam_val = MAKELPARAM(x as u16, y as u16);
-            let result = SendMessageW(hwnd, LB_ITEMFROMPOINT, wparam(0), lparam(lparam_val));
-            let item_idx = (result & 0xFFFF) as i32;
-            if item_idx >= 0 {
-                let item_id = SendMessageW(hwnd, LB_GETITEMDATA, wparam(item_idx as u32), lparam(0));
-                if item_id != -1 {
-                    show_preview(item_id as i64);
+
+        // 获取点击位置所在的列表项索引
+        let lparam_val = MAKELPARAM(x as u16, y as u16);
+        let result = SendMessageW(hwnd, LB_ITEMFROMPOINT, wparam(0), lparam(lparam_val));
+        let item_idx = (result & 0xFFFF) as i32;
+        if item_idx < 0 { return 0; }
+        let item_id = SendMessageW(hwnd, LB_GETITEMDATA, wparam(item_idx as u32), lparam(0));
+        if item_id == -1 { return 0; }
+
+        // star area: width-48 ~ width-24 → 切换收藏
+        if x >= width - 48 && x < width - 24 {
+            if let Some(ref state) = PANEL_STATE {
+                if let Ok(mut app) = state.app_state.lock() {
+                    app.toggle_favorite(item_id as i64);
                 }
             }
+            refresh_list();
+            // 恢复滚动位置
+            SendMessageW(hwnd, LB_SETTOPINDEX, wparam(item_idx as u32), lparam(0));
+            return 0;
+        }
+        // ">" area: rightmost 24px → 打开预览
+        if x >= width - 24 && x < width {
+            show_preview(item_id as i64);
             return 0;
         }
         // otherwise fall through to default
@@ -753,12 +782,12 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             let mut pt = POINT { x: screen_x, y: screen_y };
             ScreenToClient(hwnd, &mut pt);
             // 判断是否点击在子控件上（列表框 / 搜索框 / 按钮），让它们正常处理
-            // 搜索框区域：(4,6)-(416,30)
-            if pt.x >= 4 && pt.x <= 416 && pt.y >= 6 && pt.y <= 30 {
+            // 顶部区域（搜索框 + 收藏过滤按钮）：(4,6)-(456,30)
+            if pt.x >= 4 && pt.x <= 456 && pt.y >= 6 && pt.y <= 30 {
                 return DefWindowProcW(hwnd, msg, w, l);
             }
-            // 列表框区域：(0,34)-(420,452)
-            if pt.x >= 0 && pt.x <= 420 && pt.y >= 34 && pt.y <= 452 {
+            // 列表框区域：(0,34)-(460,452)
+            if pt.x >= 0 && pt.x <= 460 && pt.y >= 34 && pt.y <= 452 {
                 return DefWindowProcW(hwnd, msg, w, l);
             }
             // 按钮行区域：y=[456,484]
@@ -778,7 +807,17 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             let dis = &*(l as *const DRAWITEMSTRUCT);
             if dis.itemID == 0xFFFFFFFF { return 1; } // LB_ERR
             let hdc = dis.hDC;
-            
+
+            // 获取记录 ID，用于查询收藏状态
+            let item_data = SendMessageW(dis.hwndItem, LB_GETITEMDATA, wparam(dis.itemID), lparam(0));
+            let is_fav = if item_data != -1 {
+                if let Some(ref state) = PANEL_STATE {
+                    if let Ok(app) = state.app_state.lock() {
+                        app.records.iter().any(|r| r.id == item_data as i64 && r.is_favorite)
+                    } else { false }
+                } else { false }
+            } else { false };
+
             // Fill background
             if (dis.itemState & ODS_SELECTED) != 0 {
                 FillRect(hdc, &dis.rcItem, GetSysColorBrush(COLOR_HIGHLIGHT));
@@ -788,18 +827,32 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                 SetTextColor(hdc, 0x00000000); // black text on white
             }
             SetBkMode(hdc, TRANSPARENT);
-            
-            // Draw item text (left side, with margin for "button on right)
+
+            // Draw item text (left side, leave space for star + ">" on right)
             let mut txt_rc = dis.rcItem;
             txt_rc.left += 4;
-            txt_rc.right -= 26; // leave space for "button
-            
+            txt_rc.right -= 48; // leave space for star (24px) + ">" (24px)
+
             let mut buf = [0u16; 512];
             let len = SendMessageW(dis.hwndItem, LB_GETTEXT, wparam(dis.itemID), lparam(buf.as_mut_ptr() as isize));
             if len > 0 && len < 512 {
                 DrawTextW(hdc, buf.as_ptr(), len as i32, &mut txt_rc, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
             }
-            
+
+            // Draw star (★ or ☆) in the 24px area left of ">"
+            let mut star_rc = dis.rcItem;
+            star_rc.left = star_rc.right - 48;
+            star_rc.right = star_rc.right - 24;
+            if (dis.itemState & ODS_SELECTED) != 0 {
+                SetTextColor(hdc, 0x0000D7FF); // gold/yellow on selected (0x00BBGGRR)
+            } else if is_fav {
+                SetTextColor(hdc, 0x0000D7FF); // gold/yellow when favorited (0x00BBGGRR)
+            } else {
+                SetTextColor(hdc, 0x00CCCCCC); // light gray when not favorited
+            }
+            let star_char = if is_fav { [0x2605u16, 0u16] } else { [0x2606u16, 0u16] }; // ★ / ☆
+            DrawTextW(hdc, star_char.as_ptr(), 1, &mut star_rc, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+
             // Draw ">" button
             let mut btn_rc = dis.rcItem;
             btn_rc.left = btn_rc.right - 24;
@@ -810,7 +863,7 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             }
             let btn_txt = [0x003Eu16, 0u16]; // ">" + null
             DrawTextW(hdc, btn_txt.as_ptr(), 1, &mut btn_rc, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
-            
+
             1
         }
         WM_COMMAND => {
@@ -830,6 +883,18 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                         let hinst = GetModuleHandleW(std::ptr::null());
                         let _ = settings_window::create_settings_window(hinst, state.hwnd, state.app_state.clone());
                     }
+                    0
+                }
+                ID_BTN_FAV_FILTER if code == BN_CLICKED => {
+                    if let Some(ref state) = PANEL_STATE {
+                        if let Ok(mut app) = state.app_state.lock() {
+                            app.favorite_filter = !app.favorite_filter;
+                            let text = if app.favorite_filter { "★ 收藏" } else { "☆ 收藏" };
+                            let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+                            SetWindowTextW(state.btn_fav_filter, wide.as_ptr());
+                        }
+                    }
+                    refresh_list();
                     0
                 }
                 ID_SEARCH_EDIT if code == EN_CHANGE => {

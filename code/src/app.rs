@@ -25,6 +25,8 @@ pub struct AppState {
     pub selected_index: i64,
     /// 确认后粘贴模式下的"待粘贴"记录ID
     pub pending_paste_id: Option<i64>,
+    /// 是否只显示收藏项
+    pub favorite_filter: bool,
 }
 
 impl AppState {
@@ -39,10 +41,11 @@ impl AppState {
             search_keyword: String::new(),
             selected_index: -1,
             pending_paste_id: None,
+            favorite_filter: false,
         })
     }
 
-    /// 重新加载记录列表（根据当前搜索关键词）
+    /// 重新加载记录列表（根据当前搜索关键词和收藏过滤）
     pub fn refresh_records(&mut self) {
         let repo = Repository::new(&self.db);
         let limit = if self.config.max_records > 0 && self.config.max_records < 10000 {
@@ -51,16 +54,16 @@ impl AppState {
             10000
         };
 
-        if self.search_keyword.is_empty() {
+        if self.search_keyword.is_empty() && !self.favorite_filter {
             match repo.list(limit, 0) {
                 Ok(records) => self.records = records,
                 Err(e) => log::error!("加载记录列表失败: {}", e),
             }
         } else {
             let query = crate::storage::models::SearchQuery {
-                keyword: Some(self.search_keyword.clone()),
+                keyword: if self.search_keyword.is_empty() { None } else { Some(self.search_keyword.clone()) },
                 content_type_filter: None,
-                favorite_only: false,
+                favorite_only: self.favorite_filter,
                 limit,
                 offset: 0,
             };
