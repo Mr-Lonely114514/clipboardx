@@ -11,6 +11,7 @@ use crate::ui::settings_window;
 pub struct PanelState {
     pub hwnd: HWND,
     pub list_hwnd: HWND,
+    pub search_hwnd: HWND,
     pub btn_delete: HWND,
     pub btn_confirm: HWND,
     pub btn_settings: HWND,
@@ -19,6 +20,7 @@ pub struct PanelState {
     pub delete_mode: bool,
     pub checked_ids: HashSet<i64>,
     pub list_orig_proc: isize,
+    pub search_orig_proc: isize,
     pub preview_hwnd: HWND,
     pub preview_edit_hwnd: HWND,
     pub preview_edit_orig_proc: isize,
@@ -31,6 +33,8 @@ const ID_LIST_BOX: u32 = 1002;
 const ID_BTN_DELETE: u32 = 1003;
 const ID_BTN_CONFIRM: u32 = 1004;
 const ID_BTN_SETTINGS: u32 = 1005;
+const ID_SEARCH_EDIT: u32 = 1006;
+const EM_SETCUEBANNER: u32 = 0x1501;
 fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -85,7 +89,7 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         let title = w("ClipBoardX");
 
         let hwnd = CreateWindowExW(
-            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TOPMOST,
+            WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TOPMOST,
             class_name.as_ptr(),
             title.as_ptr(),
             WS_POPUP | WS_CAPTION | WS_SYSMENU,
@@ -101,21 +105,36 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
 
         SetLayeredWindowAttributes(hwnd, 0, 240, LWA_ALPHA);
 
-        // 列表框（从顶部开始）
+        let hfont = CreateFontW(
+            -14, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, w("Microsoft YaHei UI").as_ptr(),
+        );
+
+        // 搜索框（标题栏和列表框之间）
+        let edit_class = w("EDIT");
+        let search_hwnd = CreateWindowExW(
+            WS_EX_CLIENTEDGE,
+            edit_class.as_ptr(),
+            std::ptr::null(),
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_LEFT | ES_AUTOHSCROLL,
+            4, 6, 412, 24,
+            hwnd, HMENU(ID_SEARCH_EDIT as isize), hinst, std::ptr::null(),
+        );
+        SendMessageW(search_hwnd, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
+        // 提示文字
+        let placeholder = w("搜索历史记录…");
+        SendMessageW(search_hwnd, EM_SETCUEBANNER, wparam(1), lparam(placeholder.as_ptr() as isize));
+
+        // 列表框（搜索框下方）
         let list_class = w("LISTBOX");
         let list_hwnd = CreateWindowExW(
             WS_EX_CLIENTEDGE,
             list_class.as_ptr(),
             std::ptr::null(),
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
-            0, 0, 420, 450,
+            0, 34, 420, 418,
             hwnd, HMENU(ID_LIST_BOX as isize), hinst, std::ptr::null(),
-        );
-
-        let hfont = CreateFontW(
-            -14, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, w("Microsoft YaHei UI").as_ptr(),
         );
         SendMessageW(list_hwnd, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
 
@@ -154,13 +173,16 @@ pub fn create_panel(hinst: HINSTANCE, app_state: Arc<Mutex<AppState>>) -> Result
         SendMessageW(btn_confirm, WM_SETFONT, wparam(hfont.0 as u32), lparam(0));
 
         // 子类化列表框：拦截键盘消息
-        let orig_proc = SetWindowLongPtrW(list_hwnd, GWLP_WNDPROC, list_box_proc as isize);
+        let list_orig_proc = SetWindowLongPtrW(list_hwnd, GWLP_WNDPROC, list_box_proc as isize);
+        // 子类化搜索框：拦截键盘消息（ESC 清空+HIDE, 下箭头跳转列表框）
+        let search_orig_proc = SetWindowLongPtrW(search_hwnd, GWLP_WNDPROC, search_edit_proc as isize);
         let state = PanelState {
-            hwnd, list_hwnd,
+            hwnd, list_hwnd, search_hwnd,
             btn_delete, btn_confirm, btn_settings,
             app_state, prev_foreground: HWND(0),
             delete_mode: false, checked_ids: HashSet::new(),
-            list_orig_proc: orig_proc,
+            list_orig_proc,
+            search_orig_proc,
             preview_hwnd: HWND(0),
             preview_edit_hwnd: HWND(0),
             preview_edit_orig_proc: 0,
@@ -182,6 +204,14 @@ pub fn show_panel(hwnd: HWND) {
             SetWindowTextW(state.btn_delete, w("删除").as_ptr());
             ShowWindow(state.btn_confirm, SW_HIDE);
             ShowWindow(state.btn_settings, SW_SHOW);
+            // 清空搜索框
+            SetWindowTextW(state.search_hwnd, std::ptr::null());
+        }
+        // 重置搜索关键词
+        if let Some(ref state) = PANEL_STATE {
+            if let Ok(mut app) = state.app_state.lock() {
+                app.search_keyword.clear();
+            }
         }
         // 记录打开面板前的前景窗口
         let fg = GetForegroundWindow();
@@ -225,9 +255,9 @@ pub fn show_panel(hwnd: HWND) {
             }
         }
 
-        SetWindowPos(hwnd, HWND_TOPMOST, x, y, panel_w, panel_h, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+        SetWindowPos(hwnd, HWND_TOPMOST, x, y, panel_w, panel_h, SWP_SHOWWINDOW);
         if let Some(ref state) = PANEL_STATE {
-            SetFocus(state.list_hwnd);
+            SetFocus(state.search_hwnd);
         }
     }
 }
@@ -235,6 +265,15 @@ pub fn show_panel(hwnd: HWND) {
 pub fn hide_panel(hwnd: HWND) {
     unsafe {
         close_preview();
+        // 清空搜索状态
+        if let Some(ref state) = PANEL_STATE {
+            SetWindowTextW(state.search_hwnd, std::ptr::null());
+        }
+        if let Some(ref state) = PANEL_STATE {
+            if let Ok(mut app) = state.app_state.lock() {
+                app.search_keyword.clear();
+            }
+        }
         ShowWindow(hwnd, SW_HIDE);
     }
 }
@@ -665,6 +704,44 @@ unsafe extern "system" fn list_box_proc(
     }
 }
 
+/// 搜索框子类化窗口过程 -- ESC 清空/隐藏, 下箭头跳转列表框
+unsafe extern "system" fn search_edit_proc(
+    hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM,
+) -> LRESULT {
+    if msg == WM_KEYDOWN {
+        let vk = (w as u32 & 0xFFFF) as u16;
+        match vk {
+            VK_ESCAPE => {
+                if let Some(ref state) = PANEL_STATE {
+                    // 清空搜索框内容
+                    SetWindowTextW(hwnd, std::ptr::null());
+                    if let Ok(mut app) = state.app_state.lock() {
+                        app.search_keyword.clear();
+                    }
+                    refresh_list();
+                    hide_panel(state.hwnd);
+                }
+                return 0;
+            }
+            VK_DOWN => {
+                // 下箭头：焦点跳转到列表框
+                if let Some(ref state) = PANEL_STATE {
+                    SetFocus(state.list_hwnd);
+                }
+                return 0;
+            }
+            _ => {}
+        }
+    }
+    // 其余消息走默认编辑框处理
+    let orig = PANEL_STATE.as_ref().map(|s| s.search_orig_proc).unwrap_or(0);
+    if orig == 0 {
+        DefWindowProcW(hwnd, msg, w, l)
+    } else {
+        CallWindowProcW(orig, hwnd, msg, w, l)
+    }
+}
+
 unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
         WM_CLOSE => { hide_panel(hwnd); 0 }
@@ -675,9 +752,13 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             let screen_y = HIWORD(l32) as i16 as i32;
             let mut pt = POINT { x: screen_x, y: screen_y };
             ScreenToClient(hwnd, &mut pt);
-            // 判断是否点击在子控件上（列表框 / 按钮），让它们正常处理
-            // 列表框区域：(0,6)-(420,450)
-            if pt.x >= 0 && pt.x <= 420 && pt.y >= 6 && pt.y <= 450 {
+            // 判断是否点击在子控件上（列表框 / 搜索框 / 按钮），让它们正常处理
+            // 搜索框区域：(4,6)-(416,30)
+            if pt.x >= 4 && pt.x <= 416 && pt.y >= 6 && pt.y <= 30 {
+                return DefWindowProcW(hwnd, msg, w, l);
+            }
+            // 列表框区域：(0,34)-(420,452)
+            if pt.x >= 0 && pt.x <= 420 && pt.y >= 34 && pt.y <= 452 {
                 return DefWindowProcW(hwnd, msg, w, l);
             }
             // 按钮行区域：y=[456,484]
@@ -746,6 +827,16 @@ unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                         let hinst = GetModuleHandleW(std::ptr::null());
                         let _ = settings_window::create_settings_window(hinst, state.hwnd, state.app_state.clone());
                     }
+                    0
+                }
+                ID_SEARCH_EDIT if code == EN_CHANGE => {
+                    if let Some(ref state) = PANEL_STATE {
+                        let txt = crate::ui::search_bar::get_search_text(state.search_hwnd);
+                        if let Ok(mut app) = state.app_state.lock() {
+                            app.search_keyword = txt;
+                        }
+                    }
+                    refresh_list();
                     0
                 }
                 ID_LIST_BOX if code == LBN_SELCHANGE => {
