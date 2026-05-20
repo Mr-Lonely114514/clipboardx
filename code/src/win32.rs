@@ -231,6 +231,7 @@ pub const CS_DBLCLKS: u32 = 0x0008;
 
 // 窗口消息
 pub const WM_APP: u32 = 0x8000;
+pub const WM_PAINT: u32 = 0x000F;
 pub const WM_CLOSE: u32 = 0x0010;
 pub const WM_DESTROY: u32 = 0x0002;
 pub const WM_COMMAND: u32 = 0x0111;
@@ -441,6 +442,9 @@ pub const MOD_NOREPEAT: u32 = 0x4000;
 
 // GDI
 pub const WHITE_BRUSH: u32 = 0;
+pub const BI_RGB: u32 = 0;
+pub const DIB_RGB_COLORS: u32 = 0;
+pub const SRCCOPY: u32 = 0x00CC0020;
 pub const GWLP_WNDPROC: i32 = -4;
 pub const LWA_ALPHA: u32 = 0x00000002;
 pub const FW_NORMAL: u32 = 400;
@@ -473,6 +477,41 @@ pub fn MAKELPARAM(lo: u16, hi: u16) -> LPARAM {
 
 pub fn RGB(r: u8, g: u8, b: u8) -> COLORREF {
     (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
+}
+
+/// DIB 位图信息头
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BITMAPINFOHEADER {
+    pub biSize: u32,
+    pub biWidth: i32,
+    pub biHeight: i32,
+    pub biPlanes: u16,
+    pub biBitCount: u16,
+    pub biCompression: u32,
+    pub biSizeImage: u32,
+    pub biXPelsPerMeter: i32,
+    pub biYPelsPerMeter: i32,
+    pub biClrUsed: u32,
+    pub biClrImportant: u32,
+}
+
+/// DIB 位图信息（头部 + 颜色表入口）
+#[repr(C)]
+pub struct BITMAPINFO {
+    pub bmiHeader: BITMAPINFOHEADER,
+    pub bmiColors: [u32; 1], // 变长，实际根据颜色表大小
+}
+
+/// 绘制结构（BeginPaint / EndPaint 使用）
+#[repr(C)]
+pub struct PAINTSTRUCT {
+    pub hdc: HDC,
+    pub fErase: BOOL,
+    pub rcPaint: RECT,
+    pub fRestore: BOOL,
+    pub fIncUpdate: BOOL,
+    pub rgbReserved: [u8; 32],
 }
 
 // ─── FFI 声明 ───
@@ -563,6 +602,19 @@ extern "system" {
     pub fn GlobalFree(hMem: HGLOBAL) -> HGLOBAL;
     pub fn GlobalSize(hMem: HGLOBAL) -> usize;
     // 注意: GlobalSize 签名可能有歧义，用 GetClipboardData 返回的 HANDLE
+
+    pub fn StretchDIBits(
+        hdc: HDC,
+        xDest: i32, yDest: i32, wDest: i32, hDest: i32,
+        xSrc: i32, ySrc: i32, wSrc: i32, hSrc: i32,
+        lpBits: *const u8,
+        lpbmi: *const BITMAPINFO,
+        iUsage: u32,
+        dwRop: u32,
+    ) -> i32;
+    pub fn BeginPaint(hWnd: HWND, lpPaint: *mut PAINTSTRUCT) -> HDC;
+    pub fn EndPaint(hWnd: HWND, lpPaint: *const PAINTSTRUCT) -> BOOL;
+    pub fn InvalidateRect(hWnd: HWND, lpRect: *const RECT, bErase: BOOL) -> BOOL;
 }
 
 #[link(name = "shell32")]

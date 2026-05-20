@@ -32,6 +32,9 @@ pub struct PanelState {
 
 static mut PANEL_STATE: Option<PanelState> = None;
 
+/// 当前预览图片的 DIB 原始数据（仅图片类型预览使用）
+static mut PREVIEW_IMAGE_DATA: Option<Vec<u8>> = None;
+
 const ID_LIST_BOX: u32 = 1002;
 const ID_BTN_DELETE: u32 = 1003;
 const ID_BTN_CONFIRM: u32 = 1004;
@@ -376,7 +379,7 @@ fn truncate(s: &str, max: usize) -> String {
 /// 预览内容显示的最大字符数
 const MAX_PREVIEW_CHARS: usize = 8000;
 
-/// 预览弹出窗口的窗口过程（处理关闭、缩放、Escape）
+/// 预览弹出窗口的窗口过程（处理关闭、缩放、Escape，以及图片渲染）
 unsafe extern "system" fn preview_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
         WM_CLOSE => {
@@ -390,7 +393,71 @@ unsafe extern "system" fn preview_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: L
                 return 0;
             }
         }
+        WM_PAINT => {
+            if let Some(ref dib_data) = PREVIEW_IMAGE_DATA {
+                if dib_data.len() >= std::mem::size_of::<BITMAPINFOHEADER>() {
+                    let mut ps: PAINTSTRUCT = std::mem::zeroed();
+                    let hdc = BeginPaint(hwnd, &mut ps);
+
+                    let header = &*(dib_data.as_ptr() as *const BITMAPINFOHEADER);
+                    let bmi = dib_data.as_ptr() as *const BITMAPINFO;
+
+                    // 计算颜色表大小
+                    let color_count = if header.biClrUsed != 0 {
+                        header.biClrUsed as usize
+                    } else if header.biBitCount <= 8 {
+                        1usize << header.biBitCount
+                    } else if header.biCompression == 3 {
+                        // BI_BITFIELDS：3 个 DWORD 颜色掩码
+                        3usize
+                    } else {
+                        0
+                    };
+                    let header_size = header.biSize as usize;
+                    let pixel_offset = header_size + color_count * 4; // RGBQUAD = 4 bytes
+                    if pixel_offset < dib_data.len() {
+                        let pixels = dib_data.as_ptr().add(pixel_offset);
+
+                        let mut client = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                        GetClientRect(hwnd, &mut client);
+                        let cw = client.right - client.left;
+                        let ch = client.bottom - client.top;
+
+                        if cw > 0 && ch > 0 {
+                            let src_w = header.biWidth;
+                            let src_h = header.biHeight.abs();
+                            // 保持宽高比：按最小缩放比缩放
+                            let scale = (cw as f64 / src_w as f64).min(ch as f64 / src_h as f64);
+                            let dst_w = (src_w as f64 * scale) as i32;
+                            let dst_h = (src_h as f64 * scale) as i32;
+                            let dst_x = (cw - dst_w) / 2;
+                            let dst_y = (ch - dst_h) / 2;
+
+                            // 先填充白色背景
+                            let white_brush = GetStockObject(WHITE_BRUSH as i32);
+                            FillRect(hdc, &client, white_brush);
+
+                            StretchDIBits(
+                                hdc,
+                                dst_x, dst_y, dst_w, dst_h,
+                                0, 0, src_w, src_h,
+                                pixels, bmi, DIB_RGB_COLORS, SRCCOPY,
+                            );
+                        }
+                    }
+
+                    EndPaint(hwnd, &ps);
+                    return 0;
+                }
+            }
+            // 非图片预览，走默认绘制（EDIT 子控件自己绘制）
+        }
         WM_SIZE => {
+            if PREVIEW_IMAGE_DATA.is_some() {
+                // 图片预览：重绘适应新尺寸
+                InvalidateRect(hwnd, std::ptr::null(), TRUE);
+                return 0;
+            }
             // 调整内部 EDIT 子控件填满客户区
             if let Some(ref state) = PANEL_STATE {
                 if state.preview_hwnd == hwnd {
@@ -405,6 +472,7 @@ unsafe extern "system" fn preview_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: L
         }
         WM_DESTROY => {
             // 清除状态
+            PREVIEW_IMAGE_DATA = None;
             if let Some(ref mut state) = PANEL_STATE {
                 if state.preview_hwnd == hwnd {
                     state.preview_hwnd = HWND(0);
@@ -447,6 +515,7 @@ unsafe extern "system" fn preview_edit_proc(hwnd: HWND, msg: u32, w: WPARAM, l: 
 
 /// 关闭预览弹出窗口
 unsafe fn close_preview() {
+    PREVIEW_IMAGE_DATA = None;
     if let Some(ref mut state) = PANEL_STATE {
         if state.preview_hwnd.0 != 0 {
             DestroyWindow(state.preview_hwnd);
@@ -455,55 +524,42 @@ unsafe fn close_preview() {
     }
 }
 
-/// 显示内容预览弹出窗（只读、可滚动、约 7 行高度）
+/// 显示内容预览弹出窗（文本预览或图片预览）
 unsafe fn show_preview(record_id: i64) {
     // 关闭之前的预览
     close_preview();
+    PREVIEW_IMAGE_DATA = None;
 
     let state = match PANEL_STATE.as_ref() { Some(s) => s, None => return };
 
-    // 从数据库获取记录全文 + 时间
-    let (content, created_at) = if let Ok(app) = state.app_state.lock() {
+    // 从数据库获取完整记录（含 content_blob）
+    let record = if let Ok(app) = state.app_state.lock() {
         let repo = Repository::new(&app.db);
         match repo.find_by_id(record_id) {
-            Ok(Some(record)) => {
-                let text = match record.content_type.as_str() {
-                    "image" => "[图片]".to_string(),
-                    _ => record.content_text.unwrap_or_else(|| "[空]".to_string()),
-                };
-                (text, record.created_at)
-            }
+            Ok(Some(r)) => r,
             _ => return,
         }
     } else { return };
 
-    // 截断过长内容
-    let display = if content.chars().count() > MAX_PREVIEW_CHARS {
-        let truncated: String = content.chars().take(MAX_PREVIEW_CHARS).collect();
-        format!("{}\n\n...（内容过长，仅显示前 {} 字符）", truncated, MAX_PREVIEW_CHARS)
-    } else {
-        content
-    };
+    let is_image = record.content_type.as_str() == "image";
 
     // 获取面板位置
     let mut panel_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetWindowRect(state.hwnd, &mut panel_rect);
-
-    // 从列表框获取字体
-    let hfont = SendMessageW(state.list_hwnd, WM_GETFONT, wparam(0), lparam(0));
 
     // 先标记，防止 CreateWindowExW 触发的 WM_ACTIVATE 误判
     if let Some(ref mut s) = PANEL_STATE {
         s.preview_opening = true;
     }
 
-    // 1. 创建预览弹出窗口（带标题栏、关闭按钮、可调整大小）
+    // 创建预览弹出窗口（带标题栏、关闭按钮、可调整大小）
+    let (preview_w, preview_h) = if is_image { (600, 500) } else { (600, 400) };
     let preview_hwnd = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         w("ClipBoardX_Preview").as_ptr(),
         w("").as_ptr(), // 标题在 SetWindowTextW 时设置
         WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_SIZEBOX,
-        0, 0, 600, 400,
+        0, 0, preview_w, preview_h,
         HWND(0),
         HMENU(0),
         GetModuleHandleW(std::ptr::null()),
@@ -515,65 +571,81 @@ unsafe fn show_preview(record_id: i64) {
     if preview_hwnd.0 == 0 { return; }
 
     // 设置窗口标题为时间
-    let title_str = format!("{}", created_at.format("%Y-%m-%d %H:%M"));
+    let title_str = format!("{}", record.created_at.format("%Y-%m-%d %H:%M"));
     let title_wide = w(&title_str);
     SetWindowTextW(preview_hwnd, title_wide.as_ptr());
 
-    // 2. 创建 EDIT 子控件（只读、多行、可垂直滚动）
-    let edit_hwnd = CreateWindowExW(
-        WS_EX_CLIENTEDGE,
-        w("EDIT").as_ptr(),
-        std::ptr::null(),
-        WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_NOHIDESEL | ES_DISABLENOSCROLL,
-        0, 0, 600, 400,
-        preview_hwnd,
-        HMENU(0),
-        GetModuleHandleW(std::ptr::null()),
-        std::ptr::null(),
-    );
-    if edit_hwnd.0 == 0 { DestroyWindow(preview_hwnd); return; }
+    if is_image {
+        // ── 图片预览 ──
+        if let Some(blob) = record.content_blob {
+            PREVIEW_IMAGE_DATA = Some(blob);
+        }
+    } else {
+        // ── 文本预览 ──
+        let content = record.content_text.unwrap_or_else(|| "[空]".to_string());
 
-    // 3. 设置字体
-    if hfont != 0 {
-        SendMessageW(edit_hwnd, WM_SETFONT, wparam(hfont as u32), lparam(0));
+        // 截断过长内容
+        let display = if content.chars().count() > MAX_PREVIEW_CHARS {
+            let truncated: String = content.chars().take(MAX_PREVIEW_CHARS).collect();
+            format!("{}\n\n...（内容过长，仅显示前 {} 字符）", truncated, MAX_PREVIEW_CHARS)
+        } else {
+            content
+        };
+
+        // 从列表框获取字体
+        let hfont = SendMessageW(state.list_hwnd, WM_GETFONT, wparam(0), lparam(0));
+
+        // 创建 EDIT 子控件（只读、多行、可垂直滚动）
+        let edit_hwnd = CreateWindowExW(
+            WS_EX_CLIENTEDGE,
+            w("EDIT").as_ptr(),
+            std::ptr::null(),
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_NOHIDESEL | ES_DISABLENOSCROLL,
+            0, 0, preview_w, preview_h,
+            preview_hwnd,
+            HMENU(0),
+            GetModuleHandleW(std::ptr::null()),
+            std::ptr::null(),
+        );
+        if edit_hwnd.0 == 0 { DestroyWindow(preview_hwnd); return; }
+
+        if hfont != 0 {
+            SendMessageW(edit_hwnd, WM_SETFONT, wparam(hfont as u32), lparam(0));
+        }
+
+        let wide = w(&display);
+        SetWindowTextW(edit_hwnd, wide.as_ptr());
+
+        // 让编辑控件重新计算排版（换行）
+        SendMessageW(edit_hwnd, EM_SETTARGETDEVICE, wparam(0), lparam(0));
+
+        // 子类化 EDIT 控件，仅处理 Escape 关闭
+        let orig_edit = SetWindowLongPtrW(edit_hwnd, GWLP_WNDPROC, preview_edit_proc as isize);
+        if let Some(ref mut state) = PANEL_STATE {
+            state.preview_edit_hwnd = edit_hwnd;
+            state.preview_edit_orig_proc = orig_edit;
+        }
     }
 
-    // 4. 设置文本内容（创建后设置，确保换行计算正确）
-    let wide = w(&display);
-    SetWindowTextW(edit_hwnd, wide.as_ptr());
-
-    // 5. 让编辑控件重新计算排版（换行），确保 WS_VSCROLL 滚动条正确显示
-    SendMessageW(edit_hwnd, EM_SETTARGETDEVICE, wparam(0), lparam(0));
-
-    // 6. 子类化 EDIT 控件，仅处理 Escape 关闭
-    let orig_edit = SetWindowLongPtrW(edit_hwnd, GWLP_WNDPROC, preview_edit_proc as isize);
+    // 保存句柄
     if let Some(ref mut state) = PANEL_STATE {
-        state.preview_edit_hwnd = edit_hwnd;
-        state.preview_edit_orig_proc = orig_edit;
+        state.preview_hwnd = preview_hwnd;
     }
 
     // 定位：面板右侧，若超出屏幕则放在左侧
-    let preview_w = 600i32;
-    let preview_h = 400i32;
     let mut x = panel_rect.right + 2;
     let y = panel_rect.top;
-    // 粗略判断屏幕宽度（取面板所在监视器）
     let monitor = MonitorFromPoint(POINT { x: panel_rect.left, y: panel_rect.top }, 0);
     let mut mi = MONITORINFO { cbSize: 0, rcMonitor: RECT { left: 0, top: 0, right: 0, bottom: 0 }, rcWork: RECT { left: 0, top: 0, right: 0, bottom: 0 }, dwFlags: 0 };
     mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
     if GetMonitorInfoW(monitor, &mut mi) != FALSE && x + preview_w > mi.rcWork.right {
         x = panel_rect.left - preview_w - 2;
         if x < mi.rcWork.left {
-            x = mi.rcWork.left + 4; // 紧贴左边缘
+            x = mi.rcWork.left + 4;
         }
     }
 
     SetWindowPos(preview_hwnd, HWND_TOPMOST, x, y, preview_w, preview_h, SWP_SHOWWINDOW | SWP_NOACTIVATE);
-
-    // 保存句柄
-    if let Some(ref mut state) = PANEL_STATE {
-        state.preview_hwnd = preview_hwnd;
-    }
 }
 
 unsafe fn simulate_ctrl_v() {
