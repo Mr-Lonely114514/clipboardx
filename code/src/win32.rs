@@ -331,6 +331,8 @@ pub const LB_GETTEXTLEN: u32 = 0x018A;
 pub const LB_GETCOUNT: u32 = 0x018B;
 pub const LB_GETITEMDATA: u32 = 0x0199;
 pub const LB_SETITEMDATA: u32 = 0x019A;
+pub const LB_GETTOPINDEX: u32 = 0x018E;
+pub const LB_SETTOPINDEX: u32 = 0x0197;
 pub const LB_ITEMFROMPOINT: u32 = 0x01A9;
 
 // ListBox 通知

@@ -594,12 +594,14 @@ unsafe fn confirm_delete() {
 /// 切换当前选中记录的勾选状态
 unsafe fn toggle_check_selected() {
     // 第一步：只读方式获取当前选中记录的 ID
-    let item_id = {
+    let (item_id, top_index) = {
         let state = match PANEL_STATE.as_ref() { Some(s) => s, None => return };
         if !state.delete_mode { return; }
         let sel = SendMessageW(state.list_hwnd, LB_GETCURSEL, wparam(0), lparam(0));
         if sel < 0 { return; }
-        SendMessageW(state.list_hwnd, LB_GETITEMDATA, wparam(sel as u32), lparam(0)) as i64
+        let id = SendMessageW(state.list_hwnd, LB_GETITEMDATA, wparam(sel as u32), lparam(0)) as i64;
+        let top = SendMessageW(state.list_hwnd, LB_GETTOPINDEX, wparam(0), lparam(0)) as i32;
+        (id, top)
     };
     // 第二步：通过可变引用修改 checked_ids
     if let Some(ref mut state) = PANEL_STATE {
@@ -610,9 +612,13 @@ unsafe fn toggle_check_selected() {
         }
     }
     refresh_list();
+    // 恢复滚动位置，避免勾选时跳到顶部
+    if let Some(ref state) = PANEL_STATE {
+        SendMessageW(state.list_hwnd, LB_SETTOPINDEX, wparam(top_index as u32), lparam(0));
+    }
 }
 
-/// 列表框子类化窗口过程 -- 拦截 Escape 键和 Space 键（删除模式下切换勾选）
+/// 列表框子类化窗口过程 -- 拦截 Escape 键
 unsafe extern "system" fn list_box_proc(
     hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM,
 ) -> LRESULT {
@@ -646,15 +652,7 @@ unsafe extern "system" fn list_box_proc(
                 }
                 return 0;
             }
-            VK_SPACE => {
-                // 删除模式下按空格切换勾选
-                if let Some(ref state) = PANEL_STATE {
-                    if state.delete_mode {
-                        toggle_check_selected();
-                        return 0;
-                    }
-                }
-            }
+
             _ => {}
         }
     }
