@@ -172,9 +172,39 @@ pub fn show_panel(hwnd: HWND) {
         refresh_list();
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
-        let x = if pt.x - 210 < 0 { 10 } else { pt.x - 210 };
-        let y = pt.y + 10;
-        SetWindowPos(hwnd, HWND_TOPMOST, x, y, 420, 500, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+
+        // 获取鼠标所在监视器的工作区
+        let monitor = MonitorFromPoint(pt, 2); // MONITOR_DEFAULTTONEAREST
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            rcMonitor: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            rcWork: RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            dwFlags: 0,
+        };
+        GetMonitorInfoW(monitor, &mut mi);
+
+        let panel_w = 420;
+        let panel_h = 500;
+
+        // X：水平居中于鼠标，并钳制在工作区内
+        let mut x = pt.x - panel_w / 2;
+        if x < mi.rcWork.left {
+            x = mi.rcWork.left + 4;
+        }
+        if x + panel_w > mi.rcWork.right {
+            x = mi.rcWork.right - panel_w - 4;
+        }
+
+        // Y：默认在鼠标下方，若超出底部则移到鼠标上方
+        let mut y = pt.y + 10;
+        if y + panel_h > mi.rcWork.bottom {
+            y = pt.y - panel_h - 10;
+            if y < mi.rcWork.top {
+                y = mi.rcWork.top + 4;
+            }
+        }
+
+        SetWindowPos(hwnd, HWND_TOPMOST, x, y, panel_w, panel_h, SWP_SHOWWINDOW | SWP_NOACTIVATE);
         if let Some(ref state) = PANEL_STATE {
             SetFocus(state.list_hwnd);
         }
@@ -557,6 +587,25 @@ unsafe extern "system" fn list_box_proc(
 unsafe extern "system" fn panel_wnd_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
         WM_CLOSE => { hide_panel(hwnd); 0 }
+        WM_NCHITTEST => {
+            // 获取鼠标点击的屏幕坐标
+            let l32 = l as u32;
+            let screen_x = LOWORD(l32) as i16 as i32;
+            let screen_y = HIWORD(l32) as i16 as i32;
+            let mut pt = POINT { x: screen_x, y: screen_y };
+            ScreenToClient(hwnd, &mut pt);
+            // 判断是否点击在子控件上（列表框 / 按钮），让它们正常处理
+            // 列表框区域：(0,6)-(420,450)
+            if pt.x >= 0 && pt.x <= 420 && pt.y >= 6 && pt.y <= 450 {
+                return DefWindowProcW(hwnd, msg, w, l);
+            }
+            // 按钮行区域：y=[456,484]
+            if pt.y >= 456 && pt.y <= 484 {
+                return DefWindowProcW(hwnd, msg, w, l);
+            }
+            // 其余空白区域允许拖拽移动窗口
+            HTCAPTION as LRESULT
+        }
         WM_MEASUREITEM => {
             // lParam points to MEASUREITEMSTRUCT
             let mis = &mut *(l as *mut MEASUREITEMSTRUCT);

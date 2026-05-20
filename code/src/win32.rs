@@ -240,6 +240,8 @@ pub const WM_KEYDOWN: u32 = 0x0100;
 pub const WM_SETFONT: u32 = 0x0030;
 pub const WM_GETFONT: u32 = 0x0031;
 pub const WM_HOTKEY: u32 = 0x0312;
+pub const WM_NCHITTEST: u32 = 0x0084;
+pub const HTCAPTION: u32 = 2;
 pub const WM_LBUTTONDOWN: u32 = 0x0201;
 pub const WM_LBUTTONUP: u32 = 0x0202;
 pub const WM_LBUTTONDBLCLK: u32 = 0x0203;
@@ -499,6 +501,7 @@ extern "system" {
     pub fn GetWindowRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
     pub fn GetClientRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
     pub fn GetCursorPos(lpPoint: *mut POINT) -> BOOL;
+    pub fn ScreenToClient(hWnd: HWND, lpPoint: *mut POINT) -> BOOL;
     pub fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> HCURSOR;
     pub fn LoadIconW(hInstance: HINSTANCE, lpIconName: *const u16) -> HICON;
     pub fn GetStockObject(fnObject: i32) -> isize;
