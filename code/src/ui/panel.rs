@@ -369,9 +369,9 @@ unsafe fn show_preview(record_id: i64) {
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
         w("EDIT").as_ptr(),
         wide.as_ptr(),
-        WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_VSCROLL
+        WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_VSCROLL | WS_SIZEBOX
             | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_NOHIDESEL,
-        0, 0, 400, 160,
+        0, 0, 600, 400,
         HWND(0),
         HMENU(0),
         GetModuleHandleW(std::ptr::null()),
@@ -394,8 +394,8 @@ unsafe fn show_preview(record_id: i64) {
     }
 
     // 定位：面板右侧，若超出屏幕则放在左侧
-    let preview_w = 400i32;
-    let preview_h = 160i32;
+    let preview_w = 600i32;
+    let preview_h = 400i32;
     let mut x = panel_rect.right + 2;
     let y = panel_rect.top;
     // 粗略判断屏幕宽度（取面板所在监视器）

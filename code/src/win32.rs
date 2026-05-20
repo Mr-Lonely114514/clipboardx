@@ -204,6 +204,7 @@ pub const WS_CAPTION: u32 = 0x00C00000;
 pub const WS_SYSMENU: u32 = 0x00080000;
 pub const WS_VSCROLL: u32 = 0x00200000;
 pub const WS_TABSTOP: u32 = 0x00010000;
+pub const WS_SIZEBOX: u32 = 0x00040000;
 
 pub const WS_EX_NOACTIVATE: u32 = 0x08000000;
 pub const WS_EX_TOOLWINDOW: u32 = 0x00000080;
