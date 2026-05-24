@@ -1,0 +1,23 @@
+services:
+  codeserver:
+    build:
+      context: .
+      dockerfile: codeserver.Dockerfile
+    container_name: clipboardx-codeserver
+    ports:
+      - "8088:8080"
+    volumes:
+      # 挂载源码（code/ 目录挂到容器的 /workspace）
+      - ./code:/workspace
+      # 缓存 cargo 依赖，避免反复下载
+      - clipboardx-cargo-registry:/root/.cargo/registry
+      - clipboardx-cargo-git:/root/.cargo/git
+    environment:
+      # 访问密码，可以改成你喜欢的
+      - PASSWORD=clipboardx
+    command: code-server --bind-addr 0.0.0.0:8080 --auth password /workspace
+    restart: unless-stopped
+
+volumes:
+  clipboardx-cargo-registry:
+  clipboardx-cargo-git:

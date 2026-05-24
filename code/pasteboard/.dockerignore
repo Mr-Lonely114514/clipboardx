@@ -1,0 +1,6 @@
+target/
+clipboardx.db
+*.json
+.vscode/
+.idea/
+.git/

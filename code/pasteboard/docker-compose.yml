@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  # ---- 一键编译 ----
+  build:
+    build:
+      context: .
+      target: builder
+    container_name: clipboardx-build
+    command: >
+      sh -c "
+        cargo build --release --target x86_64-pc-windows-gnu &&
+        echo '========================================' &&
+        echo '构建完成！产物位置:' &&
+        ls -lh target/x86_64-pc-windows-gnu/release/clipboardx.exe &&
+        echo '========================================'
+      "
+    volumes:
+      # 挂载源码，实现增量编译
+      - .:/app
+      # 持久化 cargo 缓存，避免每次都重新下依赖
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+    working_dir: /app
+
+  # ---- 交互式开发环境 ----
+  dev:
+    build:
+      context: .
+      target: dev
+    container_name: clipboardx-dev
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/app
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+    working_dir: /app
+
+volumes:
+  cargo-registry:
+  cargo-git:

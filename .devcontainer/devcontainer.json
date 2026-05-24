@@ -1,0 +1,40 @@
+{
+    "name": "ClipBoardX 开发容器",
+
+    // 使用我们自定义的 Dockerfile（含 Rust + mingw-w64）
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+
+    // VS Code 设置（在容器内生效）
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",        // Rust 智能提示
+                "tamasfe.even-better-toml",       // Cargo.toml 语法高亮
+                "serayuzgur.crates",              // 依赖版本提示
+                "vadimcn.vscode-lldb",            // Rust 调试器
+                "ms-vscode.cpptools"              // C++ 支持（mingw 相关）
+            ],
+            "settings": {
+                "rust-analyzer.cargo.target": "x86_64-pc-windows-gnu",
+                "rust-analyzer.check.command": "clippy",
+                "editor.formatOnSave": true,
+                "editor.fontSize": 14
+            }
+        }
+    },
+
+    // 挂载 cargo 缓存卷（加速依赖下载）
+    "mounts": [
+        "source=clipboardx-cargo-registry,target=/usr/local/cargo/registry,type=volume",
+        "source=clipboardx-cargo-git,target=/usr/local/cargo/git,type=volume"
+    ],
+
+    // 容器启动后自动执行的命令
+    "postCreateCommand": "cargo check --target x86_64-pc-windows-gnu",
+
+    // 工作目录（对应项目的 code/ 文件夹）
+    "workspaceFolder": "/workspace",
+    "workspaceMount": "source=${localWorkspaceFolder}/code,target=/workspace,type=bind,consistency=delegated"
+}
